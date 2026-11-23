@@ -3,6 +3,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ChromaticEngine } from '../services/chromaticEngine';
 import type {
   ConcreteNoteShape,
   EnvironmentTheme,
@@ -469,6 +470,7 @@ export class BeatflowScene {
   private noteSecondaryColor = new THREE.Color('#f43f8e');
   private noteAccentColor = new THREE.Color('#fbbf24');
   private chromaticPhase = 0;
+  private chromaticEngine = new ChromaticEngine();
   private chromaticColA = new THREE.Color('#22d3ee');
   private chromaticColB = new THREE.Color('#e879f9');
   private chromaticColAccent = new THREE.Color('#6366f1');
@@ -2386,60 +2388,72 @@ export class BeatflowScene {
     this.frameId = window.setTimeout(poll, 5);
   }
 
-  private updateChromaticProgression(dt: number, beatPulse: number): void {
-    // Progressive smooth palette cycling across Cyan -> Violet -> Neon Pink -> Gold/Amber -> White-Cyan -> Multicolor
-    const stops: Array<[string, string, string]> = [
-      ['#22d3ee', '#3b82f6', '#6366f1'], // Cyan & electric blue
-      ['#8b5cf6', '#d946ef', '#a855f7'], // Violet & magenta
-      ['#f43f8e', '#ec4899', '#fb7185'], // Neon pink
-      ['#f59e0b', '#fb923c', '#fbbf24'], // Orange & gold
-      ['#67e8f9', '#e0f2fe', '#38bdf8'], // Energetic white-cyan
-      ['#06d6f2', '#f43f8e', '#a855f7'], // Multicolor climax
-    ];
+  
+  private updateChromaticProgression(
+    dt: number,
+    beatPulse: number,
+  ): void {
+    const visualConfig = this.settings.visualsConfig;
 
-    const speed =
-      this.mode === 'idle'
-        ? 0.045
-        : this.currentSection === 'drop' || this.feverActive
-          ? 0.14
-          : this.currentSection === 'buildup'
-            ? 0.09
-            : 0.055;
-    this.chromaticPhase = (this.chromaticPhase + dt * speed) % stops.length;
+    const dynamicPalette = this.chromaticEngine.update({
+      basePalette: this.currentPalette,
+      section: this.currentSection,
+      energy: this.smoothedEnergy,
+      beatPulse,
+      elapsed: this.clock.elapsedTime,
+      bpm: this.activeProfile?.bpm ?? 120,
+      dt,
+      intensity: visualConfig?.glowIntensity ?? 1.0,
+      flashIntensity: visualConfig?.flashIntensity ?? 0.65,
+      reducedFlash: Boolean(visualConfig?.reducedFlash),
+      screenEffects: visualConfig?.screenEffects !== false,
+    });
 
-    // Gentle section bias while preserving smooth transitions (no harsh strobe jumps)
-    const sectionOffset =
-      this.currentSection === 'buildup'
-        ? 1.0
-        : this.currentSection === 'drop'
-          ? 2.2
-          : this.currentSection === 'chorus'
-            ? 3.8
-            : 0;
-    const f = (this.chromaticPhase + sectionOffset) % stops.length;
-    const idxA = Math.floor(f) % stops.length;
-    const idxB = (idxA + 1) % stops.length;
-    const alpha = f - Math.floor(f);
+    this.chromaticColA.set(dynamicPalette.primary);
+    this.chromaticColB.set(dynamicPalette.secondary);
+    this.chromaticColAccent.set(dynamicPalette.accent);
 
-    const a1 = _tmpColor.set(stops[idxA][0]);
-    const a2 = _color.set(stops[idxB][0]);
-    this.chromaticColA.copy(a1).lerp(a2, alpha);
+    // Keep the scene's main color references synchronized.
+    this.primaryColor.copy(this.chromaticColA);
+    this.secondaryColor.copy(this.chromaticColB);
+    this.accentColor.copy(this.chromaticColAccent);
 
-    const b1 = _tmpColor.set(stops[idxA][1]);
-    const b2 = _color.set(stops[idxB][1]);
-    this.chromaticColB.copy(b1).lerp(b2, alpha);
+    // Dynamic lane strips and edges.
+    for (let i = 0; i < this.trackLayout.laneCount; i++) {
+      const laneColor =
+        i % 2 === 0
+          ? this.chromaticColA
+          : this.chromaticColB;
 
-    const c1 = _tmpColor.set(stops[idxA][2]);
-    const c2 = _color.set(stops[idxB][2]);
-    this.chromaticColAccent.copy(c1).lerp(c2, alpha);
+      if (this.laneStripMeshes[i]) {
+        const material = this.laneStripMeshes[i]
+          .material as THREE.MeshBasicMaterial;
 
-    // Blend softly with song/user palette so track identity stays unified
-    this.chromaticColA.lerp(this.primaryColor, 0.34);
-    this.chromaticColB.lerp(this.secondaryColor, 0.34);
-    this.chromaticColAccent.lerp(this.accentColor, 0.34);
+        material.color.copy(laneColor);
+      }
 
-    if (beatPulse > 0.3 && !this.settings.visualsConfig?.reducedFlash) {
-      this.chromaticColAccent.lerp(_color.setHex(0xffffff), Math.min(0.18, beatPulse * 0.15));
+      if (this.laneEdgeMats[i]) {
+        this.laneEdgeMats[i][0].color.copy(laneColor);
+        this.laneEdgeMats[i][1].color.copy(laneColor);
+      }
+    }
+
+    // Dynamic divider colors.
+    this.dividerMats.forEach((material, index) => {
+      const color =
+        index === Math.floor(this.dividerMats.length / 2)
+          ? this.chromaticColAccent
+          : index % 2 === 0
+            ? this.chromaticColA
+            : this.chromaticColB;
+
+      material.color.copy(color);
+      material.emissive.copy(color);
+    });
+
+    // Hit line follows the song palette without changing note colors.
+    if (this.hitLineMat) {
+      this.hitLineMat.emissive.copy(this.chromaticColA);
     }
   }
 
