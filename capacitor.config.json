@@ -1,0 +1,12 @@
+{
+  "appId": "com.beatflowhop.game",
+  "appName": "BEATFLOW HOP",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#050714"
+  }
+}
