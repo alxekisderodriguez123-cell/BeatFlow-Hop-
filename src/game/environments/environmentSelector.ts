@@ -12,6 +12,10 @@ export const ALL_ENVIRONMENT_THEMES: readonly EnvironmentTheme[] = [
   'mountain',
   'newyork',
   'cosmic',
+  'nightclub',
+  'synthwave',
+  'reactor',
+  'digital',
 ] as const;
 
 export const ENVIRONMENT_OPTIONS: Array<{
@@ -32,32 +36,52 @@ export const ENVIRONMENT_OPTIONS: Array<{
   {
     id: 'cyberpunk',
     label: 'Cyberpunk City',
-    subtitle: 'Metrópolis nocturna futurista con neones y tráfico aéreo',
+    subtitle: 'Metrópolis nocturna ilustrada con rascacielos neón, arcos y portal',
   },
   {
     id: 'tropical',
     label: 'Tropical Beach',
-    subtitle: 'Playa nocturna al atardecer con palmeras y olas bioluminiscentes',
+    subtitle: 'Atardecer violeta-dorado con palmeras estilizadas y brillos en el mar',
   },
   {
     id: 'ocean',
     label: 'Ocean World',
-    subtitle: 'Mar abierto nocturno con oleaje dinámico y partículas brillantes',
+    subtitle: 'Mar nocturno estilizado con oleaje luminoso y bruma lunar',
   },
   {
     id: 'mountain',
     label: 'Mountain Landscape',
-    subtitle: 'Cordillera alpina nocturna con auroras boreales y niebla',
+    subtitle: 'Cordillera ilustrada bajo auroras boreales y reflejos sobre el lago',
   },
   {
     id: 'newyork',
     label: 'New York Night',
-    subtitle: 'Puente de Brooklyn, skyline iluminado y reflejos sobre el río',
+    subtitle: 'Skyline Manhattan ilustrado con puente luminoso y reflejos dorados',
   },
   {
     id: 'cosmic',
     label: 'Cosmic Dimension',
-    subtitle: 'Espacio profundo con nebulosas, planeta anillado y asteroides',
+    subtitle: 'Nebulosa profunda con planeta anillado ilustrado y asteroides',
+  },
+  {
+    id: 'nightclub',
+    label: 'Nightclub',
+    subtitle: 'Club electrónico con focos dinámicos, láseres y muros ecualizadores',
+  },
+  {
+    id: 'synthwave',
+    label: 'Synthwave Highway',
+    subtitle: 'Autopista retrofuturista hacia un sol neón entre montañas violetas',
+  },
+  {
+    id: 'reactor',
+    label: 'Industrial Reactor',
+    subtitle: 'Central energética futurista con turbinas, conductos y núcleo plasma',
+  },
+  {
+    id: 'digital',
+    label: 'Digital Dimension',
+    subtitle: 'Matriz cibernética abstracta con portales geométricos y datos en vuelo',
   },
 ];
 
@@ -105,6 +129,7 @@ export function resolveEnvironmentTheme(
   }
 
   const avgBass = sumBass / Math.max(1, count);
+  const avgMid = sumMid / Math.max(1, count);
   const avgHigh = sumHigh / Math.max(1, count);
   const avgCentroid = sumCentroid / Math.max(1, count);
   const avgHarmonic = sumHarmonic / Math.max(1, count);
@@ -116,23 +141,20 @@ export function resolveEnvironmentTheme(
 
   // Score each environment based on continuous acoustic & rhythmic measurements
   const scores: Record<EnvironmentTheme, number> = {
-    // High percussive drive, strong bass/tempo & rhythmic complexity
     cyberpunk:
-      avgPercussive * 1.35 +
-      avgBass * 0.9 +
-      Math.min(1, bpm / 145) * 0.8 +
+      avgPercussive * 1.25 +
+      avgBass * 0.85 +
+      Math.min(1, bpm / 145) * 0.75 +
       complexity * 0.75 +
       rng.range(0, 0.35),
 
-    // Intense energy + bright high-frequency sparkle + high dynamic drops
     cosmic:
-      avgEnergy * 1.2 +
-      avgHigh * 1.15 +
+      avgEnergy * 1.15 +
+      avgHigh * 1.1 +
       avgCentroid * 0.85 +
       Math.min(1, dynRange / 22) * 0.65 +
       rng.range(0, 0.35),
 
-    // Balanced mid-energy groove, harmonic warmth, moderate tempo
     tropical:
       (1 - Math.abs(avgEnergy - 0.45)) * 0.95 +
       avgHarmonic * 1.05 +
@@ -140,7 +162,6 @@ export function resolveEnvironmentTheme(
       (1 - avgPercussive) * 0.45 +
       rng.range(0, 0.35),
 
-    // Flowing harmonic continuity, lower percussive spikes, moderate-calm energy
     ocean:
       avgHarmonic * 1.15 +
       (1 - avgEnergy) * 0.8 +
@@ -148,7 +169,6 @@ export function resolveEnvironmentTheme(
       avgCentroid * 0.55 +
       rng.range(0, 0.35),
 
-    // Wide dynamic range, atmospheric calmness or soaring harmonic builds
     mountain:
       (1 - avgPercussive) * 0.95 +
       Math.min(1, dynRange / 20) * 0.9 +
@@ -156,12 +176,39 @@ export function resolveEnvironmentTheme(
       (1 - avgBass) * 0.5 +
       rng.range(0, 0.35),
 
-    // Strong mid-range presence, steady urban groove & balanced bass/highs
     newyork:
-      (sumMid / Math.max(1, count)) * 1.2 +
+      avgMid * 1.15 +
       avgPercussive * 0.7 +
       (1 - Math.abs(bpm - 118) / 60) * 0.75 +
       avgEnergy * 0.6 +
+      rng.range(0, 0.35),
+
+    nightclub:
+      avgBass * 1.2 +
+      avgPercussive * 1.1 +
+      (1 - Math.min(1, Math.abs(bpm - 128) / 48)) * 0.9 +
+      avgEnergy * 0.75 +
+      rng.range(0, 0.35),
+
+    synthwave:
+      avgHarmonic * 0.95 +
+      avgMid * 0.9 +
+      (1 - Math.min(1, Math.abs(bpm - 114) / 50)) * 0.85 +
+      avgBass * 0.65 +
+      rng.range(0, 0.35),
+
+    reactor:
+      avgBass * 1.15 +
+      avgPercussive * 1.0 +
+      complexity * 0.95 +
+      Math.min(1, dynRange / 18) * 0.7 +
+      rng.range(0, 0.35),
+
+    digital:
+      avgCentroid * 1.1 +
+      avgHigh * 0.95 +
+      complexity * 0.9 +
+      Math.min(1, bpm / 150) * 0.75 +
       rng.range(0, 0.35),
   };
 

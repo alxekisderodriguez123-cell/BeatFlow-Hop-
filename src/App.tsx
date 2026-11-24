@@ -61,6 +61,9 @@ import { GameplayHud } from './components/GameplayHud';
 import { PauseModal } from './components/PauseModal';
 import { ResultsScreen } from './components/ResultsScreen';
 import { OnboardingTutorialModal } from './components/OnboardingTutorialModal';
+import { BeatflowCreatorView } from './components/creator/BeatflowCreatorView';
+import { CommunityHubView } from './components/creator/CommunityHubView';
+import type { BeatflowLevelDocument } from './types/creator';
 
 function pickRandomEnvironmentTheme(exclude?: EnvironmentTheme): EnvironmentTheme {
   const pool = exclude
@@ -81,6 +84,14 @@ function getPresetForTheme(theme: EnvironmentTheme): AudiovisualPresetId {
       return 'sunset';
     case 'mountain':
       return 'dreamscape';
+    case 'nightclub':
+      return 'electronic';
+    case 'synthwave':
+      return 'cyberpunk';
+    case 'reactor':
+      return 'electronic';
+    case 'digital':
+      return 'cyberpunk';
     case 'cyberpunk':
     default:
       return 'cyberpunk';
@@ -158,6 +169,8 @@ export default function App() {
   const [tutorialTheme, setTutorialTheme] = useState<EnvironmentTheme>(() =>
     pickRandomEnvironmentTheme(),
   );
+  const [creatorInitialLevel, setCreatorInitialLevel] = useState<BeatflowLevelDocument | null>(null);
+  const [creatorAutoPlaytest, setCreatorAutoPlaytest] = useState(false);
 
   const activeSongRef = useRef<SongMetadata | null>(null);
   const activeConfigRef = useRef<GenerationConfig>(settings.generationConfig);
@@ -278,10 +291,10 @@ export default function App() {
     saveSettings(settings);
   }, [settings]);
 
-  // Keep menu ambient audio strictly separated from gameplay & update 3D camera menu mode
+  // Keep menu ambient audio strictly separated from gameplay & creator playtest
   useEffect(() => {
     sceneRef.current?.setMenuMode(screen === 'menu');
-    if (screen === 'playing') {
+    if (screen === 'playing' || screen === 'creator' || screen === 'community') {
       menuAmbientAudio.exitToGameplay();
     } else {
       menuAmbientAudio.enterMenu();
@@ -961,11 +974,45 @@ export default function App() {
         />
       )}
 
+      {screen === 'creator' && (
+        <BeatflowCreatorView
+          initialLevel={creatorInitialLevel}
+          initialLaunchPlaytest={creatorAutoPlaytest}
+          deviceQuality={settings.graphicsQuality}
+          onBack={() => {
+            audioEngine.playUiTick();
+            setCreatorInitialLevel(null);
+            setCreatorAutoPlaytest(false);
+            setScreen('menu');
+          }}
+          onOpenCommunity={() => {
+            audioEngine.playUiTick();
+            setScreen('community');
+          }}
+        />
+      )}
+
+      {screen === 'community' && (
+        <CommunityHubView
+          onBack={() => {
+            audioEngine.playUiTick();
+            setScreen('menu');
+          }}
+          onOpenInCreator={(level, startPlaytest = false) => {
+            audioEngine.playUiTick();
+            setCreatorInitialLevel(level);
+            setCreatorAutoPlaytest(startPlaytest);
+            setScreen('creator');
+          }}
+        />
+      )}
+
       {/* Gameplay HUD */}
       {screen === 'playing' && activeSong && !gameResult && (
         <GameplayHud
           song={activeSong}
           stats={liveStats}
+          twoThumbMode={Boolean(activeConfig.twoThumbMode)}
           externalPressedLanes={keyboardPressedLanes}
           onLanePress={(lane) => sceneRef.current?.handleLaneInput(lane)}
           onLaneRelease={(lane) => sceneRef.current?.handleLaneRelease(lane)}

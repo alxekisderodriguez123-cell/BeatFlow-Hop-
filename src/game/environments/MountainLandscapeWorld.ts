@@ -1,48 +1,53 @@
 import * as THREE from 'three';
 import type { SongPalette } from '../../types/game';
+import {
+  addInkOutline,
+  createCelToonGradientMap,
+  createCrossStarTexture,
+  createIllustratedMoonTexture,
+  createIllustratedMountainTexture,
+  createStylizedCloudTexture,
+} from './illustratedLayers';
 import { SeededRng } from './seededRandom';
-import { createCloudPuffTexture, createSoftGlowTexture, disposeObjectTree } from './sharedTextures';
+import { disposeObjectTree } from './sharedTextures';
 import type { WorldAtmosphere, WorldBuildOptions, WorldInstance, WorldUpdateContext } from './types';
-
-function ridgeFbm(x: number, z: number, seedOffset: number): number {
-  const n1 = 1 - Math.abs(Math.sin(x * 0.085 + seedOffset) * Math.cos(z * 0.075 - seedOffset * 0.5));
-  const n2 = 1 - Math.abs(Math.sin(x * 0.19 - z * 0.14 + seedOffset * 1.7));
-  const n3 = Math.sin(x * 0.42 + z * 0.37) * 0.5 + 0.5;
-  return n1 * 0.58 + n2 * 0.28 + n3 * 0.14;
-}
 
 export class MountainLandscapeWorld implements WorldInstance {
   public readonly theme = 'mountain' as const;
   public readonly group = new THREE.Group();
   public readonly atmosphere: WorldAtmosphere = {
-    backgroundColor: 0x040b18,
-    fogColor: 0x081a2b,
-    fogDensity: 0.0085,
+    backgroundColor: 0x0a132c,
+    fogColor: 0x13274a,
+    fogDensity: 0.0072,
     hemiSkyColor: 0x34d399,
-    hemiGroundColor: 0x09111f,
+    hemiGroundColor: 0x0f172a,
     dirLightColor: 0xcffafe,
   };
 
   private rng: SeededRng;
+  private toonGrad: THREE.DataTexture;
   private skyMat!: THREE.ShaderMaterial;
   private auroraMats: THREE.ShaderMaterial[] = [];
   private mistLakeMat!: THREE.ShaderMaterial;
   private snowPoints!: THREE.Points;
   private snowMat!: THREE.PointsMaterial;
-  private snowCount = 260;
+  private snowCount = 220;
 
   constructor(opts: WorldBuildOptions) {
-    this.rng = new SeededRng(`${opts.seed}:mountain`);
-    this.buildAlpineNightSky();
-    this.buildAuroraCurtains();
-    this.buildMountainRanges();
-    this.buildPineFoothills();
-    this.buildValleyLakeAndMist();
-    this.buildAlpineParticles();
+    this.rng = new SeededRng(`${opts.seed}:mountain-illustrated`);
+    this.toonGrad = createCelToonGradientMap();
+    this.snowCount = opts.graphicsQuality === 'low' ? 95 : opts.graphicsQuality === 'medium' ? 155 : 220;
+
+    this.buildIllustratedAlpineSky();
+    this.buildAuroraRibbons();
+    this.buildIllustratedParallaxMountains(opts.maxAnisotropy);
+    this.buildInkOutlinedPines();
+    this.buildAuroraReflectingLake();
+    this.buildAlpineStarlightAndSnow();
   }
 
-  private buildAlpineNightSky(): void {
-    const geo = new THREE.SphereGeometry(135, 32, 18);
+  private buildIllustratedAlpineSky(): void {
+    const geo = new THREE.SphereGeometry(140, 32, 18);
     this.skyMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
@@ -62,25 +67,17 @@ export class MountainLandscapeWorld implements WorldInstance {
         uniform float uBrightness;
         varying vec3 vDir;
 
-        float hash(vec2 p) {
-          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-        }
-
         void main() {
-          float y = clamp(vDir.y, -0.2, 1.0);
-          vec3 zenith = vec3(0.015, 0.035, 0.11);
-          vec3 horizon = vec3(0.04, 0.14, 0.24);
-          vec3 col = mix(horizon, zenith, smoothstep(0.0, 0.55, y));
+          float y = clamp(vDir.y, -0.15, 1.0);
+          vec3 zenith = vec3(0.03, 0.06, 0.2);
+          vec3 midSky = vec3(0.08, 0.19, 0.38);
+          vec3 horizonGlow = vec3(0.16, 0.48, 0.56);
 
-          // Crisp alpine starfield
-          float cell = hash(floor(vDir.xy * 210.0));
-          float stars = step(0.992, cell) * smoothstep(0.08, 0.35, y);
-          float twinkle = 0.65 + 0.35 * sin(uTime * 2.8 + cell * 55.0);
-          col += vec3(0.84, 0.96, 1.0) * stars * twinkle;
+          vec3 col = mix(horizonGlow, midSky, smoothstep(0.01, 0.28, y));
+          col = mix(col, zenith, smoothstep(0.24, 0.68, y));
 
-          // Ambient aurora sky glow
-          float auroraGlow = exp(-abs(vDir.y - 0.28) * 5.5) * (0.45 + 0.55 * sin(vDir.x * 2.5 + uTime * 0.4));
-          col += vec3(0.04, 0.42, 0.38) * max(0.0, auroraGlow) * (0.35 + uEnergy * 0.3);
+          float auroraSky = exp(-abs(vDir.y - 0.25) * 5.0) * (0.5 + 0.5 * sin(vDir.x * 2.2 + uTime * 0.35));
+          col += vec3(0.08, 0.58, 0.52) * auroraSky * (0.35 + uEnergy * 0.25);
 
           gl_FragColor = vec4(col * uBrightness, 1.0);
         }
@@ -90,21 +87,48 @@ export class MountainLandscapeWorld implements WorldInstance {
       fog: false,
     });
     this.group.add(new THREE.Mesh(geo, this.skyMat));
+
+    const moonTex = createIllustratedMoonTexture('#f0fdf4', '#99f6e4', 'rgba(52,211,153,0.42)');
+    const moon = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: moonTex,
+        transparent: true,
+        opacity: 0.94,
+        depthWrite: false,
+        fog: false,
+      }),
+    );
+    moon.position.set(18, 28, -94);
+    moon.scale.set(17, 17, 1);
+    this.group.add(moon);
+
+    const cloudTex = createStylizedCloudTexture('#142a4f', '#5eead4', '#08142b', false);
+    const cloud = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: cloudTex,
+        transparent: true,
+        opacity: 0.78,
+        depthWrite: false,
+        fog: false,
+      }),
+    );
+    cloud.position.set(-28, 22, -88);
+    cloud.scale.set(44, 15, 1);
+    this.group.add(cloud);
   }
 
-  private buildAuroraCurtains(): void {
-    const ribbonConfigs = [
-      { y: 21, z: -64, w: 120, h: 20, colA: '#10b981', colB: '#22d3ee', phase: 0 },
-      { y: 25, z: -80, w: 140, h: 24, colA: '#34d399', colB: '#a855f7', phase: 2.1 },
+  private buildAuroraRibbons(): void {
+    const configs = [
+      { y: 21, z: -68, w: 125, h: 20, colA: '#10b981', colB: '#22d3ee', phase: 0 },
+      { y: 25, z: -82, w: 140, h: 24, colA: '#34d399', colB: '#c084fc', phase: 2.1 },
     ];
 
-    for (const cfg of ribbonConfigs) {
-      const geo = new THREE.PlaneGeometry(cfg.w, cfg.h, 48, 8);
+    for (const cfg of configs) {
+      const geo = new THREE.PlaneGeometry(cfg.w, cfg.h, 40, 6);
       const pos = geo.attributes.position as THREE.BufferAttribute;
       for (let i = 0; i < pos.count; i++) {
         const x = pos.getX(i);
-        const curveZ = Math.sin(x * 0.06 + cfg.phase) * 9.0 + Math.cos(x * 0.13) * 4.0;
-        pos.setZ(i, curveZ);
+        pos.setZ(i, Math.sin(x * 0.06 + cfg.phase) * 8.5 + Math.cos(x * 0.12) * 3.5);
       }
       geo.computeVertexNormals();
 
@@ -112,7 +136,7 @@ export class MountainLandscapeWorld implements WorldInstance {
         uniforms: {
           uTime: { value: 0 },
           uEnergy: { value: 0.25 },
-          uBass: { value: 0.2 },
+          uKick: { value: 0 },
           uBrightness: { value: 1.0 },
           uColorA: { value: new THREE.Color(cfg.colA) },
           uColorB: { value: new THREE.Color(cfg.colB) },
@@ -125,30 +149,26 @@ export class MountainLandscapeWorld implements WorldInstance {
           void main() {
             vUv = uv;
             vec3 p = position;
-            p.z += sin(p.x * 0.1 + uTime * 0.65 + uPhase) * 2.4;
+            p.z += sin(p.x * 0.1 + uTime * 0.65 + uPhase) * 2.0;
             gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
           }
         `,
         fragmentShader: `
           uniform float uTime;
           uniform float uEnergy;
-          uniform float uBass;
+          uniform float uKick;
           uniform float uBrightness;
           uniform vec3 uColorA;
           uniform vec3 uColorB;
           uniform float uPhase;
           varying vec2 vUv;
-
           void main() {
-            float rays = 0.5 + 0.5 * sin(vUv.x * 38.0 + uTime * 1.3 + uPhase);
-            float fineRays = 0.5 + 0.5 * sin(vUv.x * 84.0 - uTime * 2.1);
-            float verticalFade = smoothstep(0.0, 0.28, vUv.y) * smoothstep(1.0, 0.22, vUv.y);
-            float edgeFade = smoothstep(0.0, 0.14, vUv.x) * smoothstep(1.0, 0.86, vUv.x);
-            float shimmer = rays * 0.65 + fineRays * 0.35;
-
-            vec3 col = mix(uColorA, uColorB, clamp(vUv.y * 1.15 + sin(vUv.x * 5.0 + uTime) * 0.2, 0.0, 1.0));
-            float alpha = verticalFade * edgeFade * shimmer * (0.28 + uEnergy * 0.26 + uBass * 0.14);
-            gl_FragColor = vec4(col * (0.85 + uEnergy * 0.3) * uBrightness, clamp(alpha, 0.0, 0.62));
+            float band = smoothstep(0.0, 0.3, vUv.y) * smoothstep(1.0, 0.2, vUv.y);
+            float edge = smoothstep(0.0, 0.14, vUv.x) * smoothstep(1.0, 0.86, vUv.x);
+            float rays = 0.55 + 0.45 * sin(vUv.x * 32.0 + uTime * 1.2 + uPhase);
+            vec3 col = mix(uColorA, uColorB, vUv.y);
+            float alpha = band * edge * rays * (0.34 + uEnergy * 0.24 + uKick * 0.22);
+            gl_FragColor = vec4(col * uBrightness, clamp(alpha, 0.0, 0.68));
           }
         `,
         transparent: true,
@@ -160,152 +180,79 @@ export class MountainLandscapeWorld implements WorldInstance {
       this.auroraMats.push(mat);
 
       const curtain = new THREE.Mesh(geo, mat);
-      curtain.position.set(this.rng.range(-6, 6), cfg.y, cfg.z);
-      curtain.rotation.x = 0.16;
+      curtain.position.set(0, cfg.y, cfg.z);
+      curtain.rotation.x = 0.14;
       this.group.add(curtain);
     }
   }
 
-  private buildMountainRanges(): void {
-    const seedOffset = this.rng.range(0, 50);
-
-    // Build sculpted alpine heightfields flanking left/right valley + distant horizon peaks
-    const buildRangeMesh = (
-      width: number,
-      depth: number,
-      segX: number,
-      segZ: number,
-      maxHeight: number,
-      valleyClearance: number,
-      posX: number,
-      posZ: number,
-      tintDark: THREE.Color,
-      tintSnow: THREE.Color,
-    ) => {
-      const geo = new THREE.PlaneGeometry(width, depth, segX, segZ);
-      geo.rotateX(-Math.PI / 2);
-
-      const pos = geo.attributes.position as THREE.BufferAttribute;
-      const colors = new Float32Array(pos.count * 3);
-      const col = new THREE.Color();
-
-      for (let i = 0; i < pos.count; i++) {
-        const lx = pos.getX(i);
-        const lz = pos.getZ(i);
-        const worldX = lx + posX;
-        const worldZ = lz + posZ;
-
-        // Keep central rhythm track valley clear
-        const distFromCenter = Math.abs(worldX);
-        const valleyMask = THREE.MathUtils.smoothstep(
-          distFromCenter,
-          valleyClearance,
-          valleyClearance + 14,
-        );
-        // Also raise distant background ridge behind spawn
-        const backMask = THREE.MathUtils.smoothstep(-worldZ, 52, 82);
-        const mask = Math.max(valleyMask, backMask * 0.92);
-
-        const ridge = ridgeFbm(worldX, worldZ, seedOffset);
-        const h = Math.pow(ridge, 1.45) * maxHeight * mask;
-        pos.setY(i, h - 1.7);
-
-        const snowFactor = THREE.MathUtils.smoothstep(h, maxHeight * 0.42, maxHeight * 0.78);
-        col.copy(tintDark).lerp(tintSnow, snowFactor);
-        colors[i * 3] = col.r;
-        colors[i * 3 + 1] = col.g;
-        colors[i * 3 + 2] = col.b;
-      }
-
-      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      geo.computeVertexNormals();
-
-      const mat = new THREE.MeshStandardMaterial({
-        vertexColors: true,
-        roughness: 0.86,
-        metalness: 0.12,
-        flatShading: true,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(posX, 0, posZ);
-      this.group.add(mesh);
-    };
-
-    // Near flanking crags
-    buildRangeMesh(
-      140,
-      130,
-      64,
-      58,
-      20,
-      5.5,
-      0,
-      -48,
-      new THREE.Color('#0c172e'),
-      new THREE.Color('#7dd3fc'),
-    );
-
-    // Distant colossal snow-capped silhouette range across horizon
-    buildRangeMesh(
-      210,
-      70,
-      64,
-      26,
-      34,
-      0,
-      0,
-      -96,
-      new THREE.Color('#091328'),
-      new THREE.Color('#a5f3fc'),
-    );
-  }
-
-  private buildPineFoothills(): void {
-    // Instanced multi-tier alpine conifers along lower flanking slopes
-    const tier1 = new THREE.ConeGeometry(0.65, 1.5, 6);
-    tier1.translate(0, 1.0, 0);
-    const tier2 = new THREE.ConeGeometry(0.48, 1.2, 6);
-    tier2.translate(0, 1.8, 0);
-
-    const treeMat = new THREE.MeshStandardMaterial({
-      color: 0x071b24,
-      roughness: 0.85,
-      metalness: 0.05,
+  private buildIllustratedParallaxMountains(anisotropy: number): void {
+    const farTex = createIllustratedMountainTexture(this.rng, anisotropy, {
+      shadeHex: '#13244b',
+      litHex: '#1f3b6e',
+      rimHex: '#5eead4',
+      inkHex: '#070e22',
+      includePines: false,
+    });
+    const nearTex = createIllustratedMountainTexture(this.rng, anisotropy, {
+      shadeHex: '#0f1c38',
+      litHex: '#193259',
+      rimHex: '#67e8f9',
+      inkHex: '#050a18',
+      includePines: true,
     });
 
-    const count = 48;
-    const meshLow = new THREE.InstancedMesh(tier1, treeMat, count);
-    const meshTop = new THREE.InstancedMesh(tier2, treeMat, count);
-    const dummy = new THREE.Object3D();
+    const farMat = new THREE.MeshBasicMaterial({ map: farTex, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+    const nearMat = new THREE.MeshBasicMaterial({ map: nearTex, transparent: true, depthWrite: false, side: THREE.DoubleSide });
 
-    for (let i = 0; i < count; i++) {
-      const side = i % 2 === 0 ? -1 : 1;
-      const x = side * this.rng.range(5.4, 14.5);
-      const z = this.rng.range(-68, -4);
-      const scale = this.rng.range(0.75, 1.65);
-
-      dummy.position.set(x, -1.55, z);
-      dummy.rotation.y = this.rng.range(0, Math.PI * 2);
-      dummy.scale.setScalar(scale);
-      dummy.updateMatrix();
-      meshLow.setMatrixAt(i, dummy.matrix);
-      meshTop.setMatrixAt(i, dummy.matrix);
+    const layers = [
+      { x: 0, y: 12.5, z: -86, w: 120, h: 34, rotY: 0, mat: farMat },
+      { x: -24, y: 7.5, z: -56, w: 42, h: 20, rotY: 0.24, mat: nearMat },
+      { x: 24, y: 7.5, z: -56, w: 42, h: 20, rotY: -0.24, mat: nearMat },
+    ];
+    for (const l of layers) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(l.w, l.h), l.mat);
+      m.position.set(l.x, l.y, l.z);
+      m.rotation.y = l.rotY;
+      this.group.add(m);
     }
-
-    meshLow.instanceMatrix.needsUpdate = true;
-    meshTop.instanceMatrix.needsUpdate = true;
-    meshLow.computeBoundingSphere();
-    meshTop.computeBoundingSphere();
-    this.group.add(meshLow, meshTop);
   }
 
-  private buildValleyLakeAndMist(): void {
-    // Reflective glacial river/lake surface under the track corridor
-    const geo = new THREE.PlaneGeometry(36, 130);
+  private buildInkOutlinedPines(): void {
+    const tier1 = new THREE.ConeGeometry(0.72, 1.8, 6);
+    tier1.translate(0, 1.0, 0);
+    const tier2 = new THREE.ConeGeometry(0.52, 1.4, 6);
+    tier2.translate(0, 1.9, 0);
+
+    const treeMat = new THREE.MeshToonMaterial({
+      color: 0x0d2b38,
+      emissive: 0x064e3b,
+      emissiveIntensity: 0.18,
+      gradientMap: this.toonGrad,
+    });
+
+    const count = 18;
+    for (let i = 0; i < count; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const g = new THREE.Group();
+      const low = new THREE.Mesh(tier1, treeMat);
+      const top = new THREE.Mesh(tier2, treeMat);
+      addInkOutline(low, 0x040b18, 1.08);
+      addInkOutline(top, 0x040b18, 1.08);
+      g.add(low, top);
+      g.position.set(side * this.rng.range(6.4, 14.5), -1.62, -6 - i * 3.6);
+      g.scale.setScalar(this.rng.range(0.85, 1.55));
+      this.group.add(g);
+    }
+  }
+
+  private buildAuroraReflectingLake(): void {
+    const geo = new THREE.PlaneGeometry(170, 150);
     this.mistLakeMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
         uEnergy: { value: 0.25 },
+        uKick: { value: 0 },
         uBrightness: { value: 1.0 },
       },
       vertexShader: `
@@ -319,54 +266,36 @@ export class MountainLandscapeWorld implements WorldInstance {
       fragmentShader: `
         uniform float uTime;
         uniform float uEnergy;
+        uniform float uKick;
         uniform float uBrightness;
         varying vec3 vWorldPos;
         void main() {
-          float ripple = sin(vWorldPos.z * 0.75 + uTime * 1.4) * cos(vWorldPos.x * 0.9 - uTime * 0.9);
-          vec3 base = vec3(0.02, 0.06, 0.14);
-          vec3 auroraRef = mix(vec3(0.05, 0.55, 0.45), vec3(0.12, 0.52, 0.78), 0.5 + 0.5 * ripple);
-          float shimmer = smoothstep(0.25, 0.95, ripple * 0.5 + 0.5);
-          vec3 col = base + auroraRef * shimmer * (0.28 + uEnergy * 0.24);
+          float ripple = sin(vWorldPos.z * 0.72 + uTime * 1.4) * cos(vWorldPos.x * 0.85 - uTime * 0.9);
+          vec3 base = vec3(0.04, 0.1, 0.22);
+          vec3 auroraRef = mix(vec3(0.08, 0.72, 0.58), vec3(0.18, 0.68, 0.94), 0.5 + 0.5 * ripple);
+          float shimmer = step(0.32, ripple * 0.5 + 0.5);
+          vec3 col = base + auroraRef * shimmer * (0.28 + uEnergy * 0.22 + uKick * 0.24);
           gl_FragColor = vec4(col * uBrightness, 1.0);
         }
       `,
     });
     const lake = new THREE.Mesh(geo, this.mistLakeMat);
     lake.rotation.x = -Math.PI / 2;
-    lake.position.set(0, -1.68, -48);
+    lake.position.set(0, -1.65, -52);
     this.group.add(lake);
-
-    // Drifting valley fog banks
-    const mistTex = createCloudPuffTexture('#38bdf8');
-    for (let i = 0; i < 10; i++) {
-      const mat = new THREE.SpriteMaterial({
-        map: mistTex,
-        transparent: true,
-        opacity: 0.18,
-        depthWrite: false,
-      });
-      const sp = new THREE.Sprite(mat);
-      sp.position.set(
-        this.rng.sign() * this.rng.range(8, 26),
-        this.rng.range(0.5, 4.5),
-        this.rng.range(-78, -12),
-      );
-      sp.scale.set(this.rng.range(18, 32), this.rng.range(6, 11), 1);
-      this.group.add(sp);
-    }
   }
 
-  private buildAlpineParticles(): void {
+  private buildAlpineStarlightAndSnow(): void {
     const pos = new Float32Array(this.snowCount * 3);
     const cols = new Float32Array(this.snowCount * 3);
     const c1 = new THREE.Color('#6ee7b7');
-    const c2 = new THREE.Color('#bae6fd');
-    const c3 = new THREE.Color('#e0f2fe');
+    const c2 = new THREE.Color('#a5f3fc');
+    const c3 = new THREE.Color('#ffffff');
 
     for (let i = 0; i < this.snowCount; i++) {
-      pos[i * 3] = this.rng.range(-28, 28);
-      pos[i * 3 + 1] = this.rng.range(0.2, 20);
-      pos[i * 3 + 2] = this.rng.range(-80, 6);
+      pos[i * 3] = this.rng.range(-32, 32);
+      pos[i * 3 + 1] = this.rng.range(0.5, 24);
+      pos[i * 3 + 2] = this.rng.range(-84, 6);
       const c = i % 3 === 0 ? c1 : i % 3 === 1 ? c2 : c3;
       cols[i * 3] = c.r;
       cols[i * 3 + 1] = c.g;
@@ -378,11 +307,11 @@ export class MountainLandscapeWorld implements WorldInstance {
     geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
 
     this.snowMat = new THREE.PointsMaterial({
-      size: 0.24,
-      map: createSoftGlowTexture(),
+      size: 0.36,
+      map: createCrossStarTexture(),
       vertexColors: true,
       transparent: true,
-      opacity: 0.62,
+      opacity: 0.78,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -391,7 +320,7 @@ export class MountainLandscapeWorld implements WorldInstance {
   }
 
   public setPalette(_palette: SongPalette): void {
-    // Alpine Aurora maintains its cohesive emerald-cyan-indigo atmosphere
+    // Mountain Landscape keeps its illustrated emerald aurora palette
   }
 
   public update(ctx: WorldUpdateContext): void {
@@ -402,6 +331,8 @@ export class MountainLandscapeWorld implements WorldInstance {
       bass,
       high,
       energy,
+      kickPulse = 0,
+      hihatPulse = 0,
       inSilence,
       reactiveEnabled,
       visualIntensity,
@@ -410,13 +341,15 @@ export class MountainLandscapeWorld implements WorldInstance {
     } = ctx;
 
     const visMult = visualIntensity === 'low' ? 0.45 : visualIntensity === 'medium' ? 0.75 : 1.0;
-    const partMult = particleIntensity === 'low' ? 0.35 : particleIntensity === 'medium' ? 0.68 : 0.95;
+    const partMult = particleIntensity === 'low' ? 0.35 : particleIntensity === 'medium' ? 0.68 : 1.0;
     const bright = THREE.MathUtils.clamp(brightness, 0.5, 1.35);
     const silenceDamp = inSilence ? 0.35 : 1.0;
 
     const effBass = reactiveEnabled ? bass * visMult * silenceDamp : 0.16;
     const effHigh = reactiveEnabled ? high * visMult * silenceDamp : 0.14;
     const effEnergy = reactiveEnabled ? energy * visMult * silenceDamp : 0.18;
+    const effKick = reactiveEnabled ? kickPulse * visMult * silenceDamp : 0;
+    const effHihat = reactiveEnabled ? hihatPulse * visMult * silenceDamp : 0;
 
     this.skyMat.uniforms.uTime.value = elapsed;
     this.skyMat.uniforms.uEnergy.value = effEnergy;
@@ -425,27 +358,28 @@ export class MountainLandscapeWorld implements WorldInstance {
     for (const mat of this.auroraMats) {
       mat.uniforms.uTime.value = elapsed;
       mat.uniforms.uEnergy.value = effEnergy;
-      mat.uniforms.uBass.value = effBass;
+      mat.uniforms.uKick.value = effKick;
       mat.uniforms.uBrightness.value = bright;
     }
 
     this.mistLakeMat.uniforms.uTime.value = elapsed;
     this.mistLakeMat.uniforms.uEnergy.value = effEnergy;
+    this.mistLakeMat.uniforms.uKick.value = effKick;
     this.mistLakeMat.uniforms.uBrightness.value = bright;
 
     const activeRatio = particleIntensity === 'low' ? 0.32 : particleIntensity === 'medium' ? 0.65 : 1.0;
     const activeCount = Math.floor(this.snowCount * activeRatio);
     this.snowPoints.geometry.setDrawRange(0, activeCount);
-    this.snowMat.opacity = (0.34 + effHigh * 0.3) * partMult * bright;
+    this.snowMat.opacity = Math.min(0.92, (0.45 + effHigh * 0.25 + effHihat * 0.22) * partMult * bright);
 
     const pAttr = this.snowPoints.geometry.attributes.position as THREE.BufferAttribute;
-    const fallSpeed = mode === 'paused' ? 0 : 1.4 + effEnergy * 1.8;
-    const driftZ = mode === 'paused' ? 0 : 2.5 + effBass * 4.5;
+    const fallSpeed = mode === 'paused' ? 0 : 1.2 + effEnergy * 1.6;
+    const driftZ = mode === 'paused' ? 0 : 2.2 + effBass * 4.0;
     for (let i = 0; i < activeCount; i++) {
       let y = pAttr.getY(i) - fallSpeed * dt;
       let z = pAttr.getZ(i) + driftZ * dt;
-      if (y < 0) y = 20;
-      if (z > 8) z = -80;
+      if (y < 0) y = 24;
+      if (z > 8) z = -84;
       pAttr.setY(i, y);
       pAttr.setZ(i, z);
     }
@@ -453,6 +387,7 @@ export class MountainLandscapeWorld implements WorldInstance {
   }
 
   public dispose(): void {
+    this.toonGrad.dispose();
     disposeObjectTree(this.group);
   }
 }

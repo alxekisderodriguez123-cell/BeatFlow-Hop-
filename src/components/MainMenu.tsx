@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Crown,
   Disc3,
+  Globe,
   Music,
   Pause,
   Play,
@@ -9,6 +10,7 @@ import {
   Trophy,
   Volume2,
   VolumeX,
+  Wrench,
 } from 'lucide-react';
 import { BeatflowLogo } from './BeatflowLogo';
 import { menuAmbientAudio } from '../services/menuAmbientAudio';
@@ -24,7 +26,7 @@ interface MainMenuProps {
   onToggleMenuMusic?: () => void;
   onToggleMenuMusicPause?: () => void;
   onParallaxChange?: (nx: number, ny: number) => void;
-  onNavigate: (screen: 'music' | 'records' | 'settings') => void;
+  onNavigate: (screen: 'music' | 'records' | 'settings' | 'creator' | 'community') => void;
 }
 
 const SPARKS = [
@@ -206,7 +208,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
       {/* Center Lockup & Navigation Stack with Subtle Parallax */}
       <div
-        className="relative z-10 flex flex-col items-center justify-center w-full max-w-sm mx-auto gap-3.5 my-auto transition-transform duration-150 ease-out"
+        className="relative z-10 flex flex-col items-center justify-center w-full max-w-sm sm:max-w-md mx-auto gap-3.5 my-auto transition-transform duration-150 ease-out"
         style={{
           transform: animationsOn
             ? `translate3d(${hudOffset.x.toFixed(1)}px, ${hudOffset.y.toFixed(1)}px, 0)`
@@ -315,29 +317,51 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             )}
           </button>
 
-          <button
-            type="button"
-            onClick={() => onNavigate('records')}
-            className="relative w-full min-h-[48px] flex items-center justify-center gap-3 rounded-xl bg-[#050818]/92 hover:bg-[#0b112b] border border-indigo-400/35 hover:border-indigo-300/85 hover:-translate-y-0.5 active:scale-[0.99] transition-all text-slate-100 font-semibold text-base shadow-[0_0_16px_rgba(99,102,241,0.14)] cursor-pointer"
-          >
-            <Trophy className="w-5 h-5 text-amber-300" />
-            <span>Récords</span>
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => onNavigate('creator')}
+              className="relative min-h-[46px] flex items-center justify-center gap-2 rounded-xl bg-[#050818]/92 hover:bg-[#0b112b] border border-cyan-400/35 hover:border-cyan-300/85 hover:-translate-y-0.5 active:scale-[0.99] transition-all text-slate-100 font-semibold text-sm shadow-[0_0_16px_rgba(34,211,238,0.16)] cursor-pointer"
+            >
+              <Wrench className="w-4 h-4 text-cyan-300" />
+              <span>BeatFlow Creator</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => onNavigate('settings')}
-            className="relative w-full min-h-[48px] flex items-center justify-center gap-3 rounded-xl bg-[#050818]/92 hover:bg-[#0b112b] border border-fuchsia-400/35 hover:border-fuchsia-300/85 hover:-translate-y-0.5 active:scale-[0.99] transition-all text-slate-100 font-semibold text-base shadow-[0_0_16px_rgba(217,70,239,0.14)] cursor-pointer"
-          >
-            <Settings className="w-5 h-5 text-fuchsia-400" />
-            <span>Configuración</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('community')}
+              className="relative min-h-[46px] flex items-center justify-center gap-2 rounded-xl bg-[#050818]/92 hover:bg-[#0b112b] border border-fuchsia-400/35 hover:border-fuchsia-300/85 hover:-translate-y-0.5 active:scale-[0.99] transition-all text-slate-100 font-semibold text-sm shadow-[0_0_16px_rgba(217,70,239,0.16)] cursor-pointer"
+            >
+              <Globe className="w-4 h-4 text-fuchsia-300" />
+              <span>Comunidad</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => onNavigate('records')}
+              className="relative min-h-[46px] flex items-center justify-center gap-2 rounded-xl bg-[#050818]/92 hover:bg-[#0b112b] border border-indigo-400/35 hover:border-indigo-300/85 hover:-translate-y-0.5 active:scale-[0.99] transition-all text-slate-100 font-semibold text-sm shadow-[0_0_16px_rgba(99,102,241,0.14)] cursor-pointer"
+            >
+              <Trophy className="w-4 h-4 text-amber-300" />
+              <span>Récords</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('settings')}
+              className="relative min-h-[46px] flex items-center justify-center gap-2 rounded-xl bg-[#050818]/92 hover:bg-[#0b112b] border border-fuchsia-400/35 hover:border-fuchsia-300/85 hover:-translate-y-0.5 active:scale-[0.99] transition-all text-slate-100 font-semibold text-sm shadow-[0_0_16px_rgba(217,70,239,0.14)] cursor-pointer"
+            >
+              <Settings className="w-4 h-4 text-fuchsia-400" />
+              <span>Configuración</span>
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Subtle Bottom Control Hint */}
       <div className="relative z-10 text-center text-xs font-medium text-cyan-100/80 tracking-wider drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
-        Toca los carriles o usa D · F · J · K · Esc Pausa
+        Toca los carriles, haz clic o usa teclado D · F · J · K · Esc Pausa
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Disc3, Globe, Layers, Play, RefreshCw, Shield, Sliders, Sparkles, X } from 'lucide-react';
+import { Disc3, Eye, Globe, Layers, Play, RefreshCw, Shield, Sliders, Sparkles, X } from 'lucide-react';
+import { EnvironmentPreviewModal } from './EnvironmentPreviewModal';
 import type {
   AudiovisualPresetId,
   DifficultyLevel,
@@ -71,6 +72,7 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
   );
   const [preset, setPreset] = useState<AudiovisualPresetId>(initialPreset);
   const [showAdvanced, setShowAdvanced] = useState(initialConfig.difficulty === 'custom');
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
 
   const handleSelectDifficulty = (diff: DifficultyLevel) => {
     if (diff === 'custom') {
@@ -86,6 +88,7 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
       setConfig({
         ...next,
         musicalFocus: config.musicalFocus ?? 'balanced',
+        twoThumbMode: Boolean(config.twoThumbMode),
       });
     }
   };
@@ -94,7 +97,11 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
     setConfig((prev) => ({
       ...prev,
       difficulty:
-        key === 'seed' || key === 'laneCount' || key === 'maxMisses' || key === 'musicalFocus'
+        key === 'seed' ||
+        key === 'laneCount' ||
+        key === 'maxMisses' ||
+        key === 'musicalFocus' ||
+        key === 'twoThumbMode'
           ? prev.difficulty
           : 'custom',
       [key]: value,
@@ -238,6 +245,35 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
             </div>
           </div>
 
+          {/* Optional Two-Thumb Mode */}
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-900/85 border border-cyan-500/25 px-3.5 py-2.5">
+            <div className="min-w-0">
+              <div className="text-xs sm:text-sm font-semibold text-white">
+                Modo de Dos Pulgares
+              </div>
+              <div className="text-[11px] text-slate-400">
+                Máximo 2 notas simultáneas y carriles adaptados para jugar con ambos pulgares
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={Boolean(config.twoThumbMode)}
+              onClick={() => updateField('twoThumbMode', !config.twoThumbMode)}
+              className={`relative w-12 h-7 rounded-full transition-colors cursor-pointer shrink-0 ${
+                config.twoThumbMode
+                  ? 'bg-gradient-to-r from-cyan-500 to-fuchsia-500'
+                  : 'bg-slate-700'
+              }`}
+            >
+              <span
+                className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform ${
+                  config.twoThumbMode ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
           {/* Max Misses */}
           <div>
             <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
@@ -358,10 +394,20 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
 
           {/* Environment World Selector */}
           <div>
-            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 mb-2">
-              <Globe className="w-3.5 h-3.5 text-cyan-300" />
-              <span>Mundo / Entorno 3D</span>
-            </label>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+                <Globe className="w-3.5 h-3.5 text-cyan-300" />
+                <span>Mundo / Entorno 3D</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setPreviewModalOpen(true)}
+                className="text-xs font-semibold text-cyan-300 hover:text-cyan-200 flex items-center gap-1 cursor-pointer whitespace-nowrap"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>Vista previa 3D</span>
+              </button>
+            </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {ENVIRONMENT_OPTIONS.map((opt) => (
                 <button
@@ -379,6 +425,14 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
               ))}
             </div>
           </div>
+
+          {previewModalOpen && (
+            <EnvironmentPreviewModal
+              currentMode={environmentMode}
+              onSelect={(m) => setEnvironmentMode(m)}
+              onClose={() => setPreviewModalOpen(false)}
+            />
+          )}
 
           {/* Seed Control */}
           <div>

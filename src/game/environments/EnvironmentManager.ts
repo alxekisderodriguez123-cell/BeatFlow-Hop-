@@ -2,13 +2,17 @@ import * as THREE from 'three';
 import type { EnvironmentTheme, QualityLevel, SongPalette } from '../../types/game';
 import { CosmicDimensionWorld } from './CosmicDimensionWorld';
 import { CyberpunkCityWorld } from './CyberpunkCityWorld';
+import { DigitalDimensionWorld } from './DigitalDimensionWorld';
+import { IndustrialReactorWorld } from './IndustrialReactorWorld';
 import { MountainLandscapeWorld } from './MountainLandscapeWorld';
 import { NewYorkNightWorld } from './NewYorkNightWorld';
+import { NightclubWorld } from './NightclubWorld';
 import { OceanWorld } from './OceanWorld';
+import { SynthwaveHighwayWorld } from './SynthwaveHighwayWorld';
 import { TropicalBeachWorld } from './TropicalBeachWorld';
 import type { WorldAtmosphere, WorldInstance, WorldUpdateContext } from './types';
 
-function createWorldByTheme(
+export function createWorldByTheme(
   theme: EnvironmentTheme,
   seed: string,
   maxAnisotropy: number,
@@ -27,6 +31,14 @@ function createWorldByTheme(
       return new NewYorkNightWorld(opts);
     case 'cosmic':
       return new CosmicDimensionWorld(opts);
+    case 'nightclub':
+      return new NightclubWorld(opts);
+    case 'synthwave':
+      return new SynthwaveHighwayWorld(opts);
+    case 'reactor':
+      return new IndustrialReactorWorld(opts);
+    case 'digital':
+      return new DigitalDimensionWorld(opts);
     case 'cyberpunk':
     default:
       return new CyberpunkCityWorld(opts);

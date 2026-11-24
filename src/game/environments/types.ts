@@ -30,6 +30,10 @@ export interface WorldUpdateContext {
   treble?: number;
   sectionType?: MusicalSectionType;
   beatPulse?: number;
+  kickPulse?: number;
+  snarePulse?: number;
+  hihatPulse?: number;
+  dropFlash?: number;
   isMenu?: boolean;
   menuAmbientEffects?: boolean;
   chromaticA?: THREE.Color;

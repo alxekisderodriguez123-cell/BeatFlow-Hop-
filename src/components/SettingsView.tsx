@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Camera,
   Cpu,
+  Eye,
   FolderOpen,
   Gamepad2,
   Home,
@@ -17,6 +18,7 @@ import {
   Volume2,
   Zap,
 } from 'lucide-react';
+import { EnvironmentPreviewModal } from './EnvironmentPreviewModal';
 import type {
   AudiovisualPresetId,
   CameraConfig,
@@ -124,6 +126,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [tab, setTab] = useState<SettingsTab>('gameplay');
   const [loadingCustomAudio, setLoadingCustomAudio] = useState(false);
+  const [envPreviewOpen, setEnvPreviewOpen] = useState(false);
   const customAudioInputRef = useRef<HTMLInputElement | null>(null);
 
   const update = (patch: Partial<GameSettings>) => {
@@ -254,7 +257,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* Tab Content */}
       <div className="flex-1 overflow-y-auto beatflow-scroll px-4 sm:px-6 py-4">
-        <div className="max-w-2xl mx-auto space-y-5 pb-6">
+        <div className="max-w-3xl mx-auto space-y-5 pb-6">
           {/* 1. GAMEPLAY */}
           {tab === 'gameplay' && (
             <>
@@ -301,7 +304,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             onUpdateSettings({
                               ...settings,
                               defaultDifficulty: d,
-                              generationConfig: preset,
+                              generationConfig: {
+                                ...preset,
+                                twoThumbMode: Boolean(settings.generationConfig.twoThumbMode),
+                              },
                             });
                           }}
                           className={`min-h-[38px] rounded-xl text-xs font-semibold cursor-pointer ${
@@ -424,6 +430,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   step={0.05}
                   value={settings.touchSensitivity}
                   onChange={(v) => update({ touchSensitivity: v })}
+                />
+
+                <ToggleRow
+                  label="Modo de Dos Pulgares"
+                  subtitle="Limita acordes a 2 notas y evita saltos o slides incómodos al jugar con pulgares"
+                  checked={Boolean(settings.generationConfig.twoThumbMode)}
+                  onChange={() =>
+                    updateGen({ twoThumbMode: !settings.generationConfig.twoThumbMode })
+                  }
                 />
 
                 <ToggleRow
@@ -812,7 +827,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
 
               <div>
-                <div className="text-xs text-slate-300 mb-2">Mundo 3D</div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="text-xs text-slate-300">Mundo 3D</div>
+                  <button
+                    type="button"
+                    onClick={() => setEnvPreviewOpen(true)}
+                    className="text-xs font-semibold text-cyan-300 hover:text-cyan-200 flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Selector y Vista Previa 3D</span>
+                  </button>
+                </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                   {ENVIRONMENT_OPTIONS.map((opt) => (
                     <button
@@ -829,6 +854,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </button>
                   ))}
                 </div>
+                {envPreviewOpen && (
+                  <EnvironmentPreviewModal
+                    currentMode={settings.environmentMode}
+                    graphicsQuality={settings.graphicsQuality}
+                    onSelect={(m) => update({ environmentMode: m })}
+                    onClose={() => setEnvPreviewOpen(false)}
+                  />
+                )}
               </div>
 
               <ToggleRow

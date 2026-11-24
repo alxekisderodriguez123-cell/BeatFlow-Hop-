@@ -11,6 +11,7 @@ import { getLaneKeyLabels } from '../game/presets';
 interface GameplayHudProps {
   song: SongMetadata;
   stats: LiveGameplayStats;
+  twoThumbMode?: boolean;
   externalPressedLanes?: boolean[];
   onLanePress: (lane: number) => void;
   onLaneRelease: (lane: number) => void;
@@ -31,6 +32,7 @@ interface PointerTrack {
 export const GameplayHud: React.FC<GameplayHudProps> = ({
   song,
   stats,
+  twoThumbMode = false,
   externalPressedLanes,
   onLanePress,
   onLaneRelease,
@@ -261,6 +263,7 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
               <div className="text-[11px] font-bold text-white truncate">{song.title}</div>
               <div className="text-[9px] text-slate-300 truncate">
                 {laneCount} carriles · {stats.currentSection.toUpperCase()}
+                {twoThumbMode ? ' · 2 PULGARES' : ''}
               </div>
             </div>
           </div>
@@ -353,7 +356,7 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
         </div>
       </div>
 
-      {/* Bottom N-Lane Multi-Touch / Slide / Flick Arena */}
+      {/* Bottom N-Lane Multi-Touch / Slide / Flick Arena (compact on desktop widescreen, comfortable on mobile) */}
       <div
         ref={arenaRef}
         onPointerDown={handlePointerDown}
@@ -361,7 +364,7 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
         onPointerUp={handlePointerUpOrCancel}
         onPointerCancel={handlePointerUpOrCancel}
         style={{ gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))` }}
-        className="w-full h-[46vh] max-w-5xl mx-auto grid gap-1 px-1.5 sm:px-6 pb-3 pointer-events-auto touch-none"
+        className="w-full h-[40vh] sm:h-[28vh] lg:h-[17vh] min-h-[116px] max-w-4xl lg:max-w-5xl mx-auto grid gap-1.5 sm:gap-2 px-2 sm:px-6 pb-3 pointer-events-auto touch-none"
       >
         {Array.from({ length: laneCount }).map((_, lane) => {
           const isPressed =
@@ -370,21 +373,21 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
           return (
             <div
               key={lane}
-              className={`relative flex flex-col items-center justify-end pb-2.5 rounded-xl border transition-colors ${
+              className={`relative flex flex-col items-center justify-end pb-2 sm:pb-2.5 rounded-2xl border transition-all duration-75 cursor-pointer ${
                 isPressed
                   ? isCyan
-                    ? 'bg-cyan-400/20 border-cyan-300/85 shadow-[inset_0_-18px_28px_rgba(34,211,238,0.22)]'
-                    : 'bg-fuchsia-400/20 border-fuchsia-300/85 shadow-[inset_0_-18px_28px_rgba(232,121,249,0.22)]'
-                  : 'bg-transparent border-white/8'
+                    ? 'bg-cyan-400/22 border-cyan-200 shadow-[inset_0_-18px_28px_rgba(34,211,238,0.28),0_0_16px_rgba(34,211,238,0.3)] -translate-y-0.5'
+                    : 'bg-fuchsia-400/22 border-fuchsia-200 shadow-[inset_0_-18px_28px_rgba(232,121,249,0.28),0_0_16px_rgba(232,121,249,0.3)] -translate-y-0.5'
+                  : 'bg-[#080d22]/35 hover:bg-white/[0.04] border-white/12'
               }`}
             >
               <span
-                className={`text-[10px] sm:text-[11px] font-mono-num font-bold px-2 py-0.5 rounded-md border tracking-wider transition-all ${
+                className={`text-[10px] sm:text-[11px] font-mono-num font-bold px-2.5 py-0.5 rounded-lg border tracking-wider transition-all ${
                   isPressed
                     ? isCyan
-                      ? 'bg-cyan-500/35 border-cyan-200 text-white'
-                      : 'bg-fuchsia-500/35 border-fuchsia-200 text-white'
-                    : 'bg-[#050818]/75 border-cyan-400/20 text-slate-300'
+                      ? 'bg-cyan-500/45 border-cyan-100 text-white shadow-[0_0_10px_rgba(34,211,238,0.6)]'
+                      : 'bg-fuchsia-500/45 border-fuchsia-100 text-white shadow-[0_0_10px_rgba(232,121,249,0.6)]'
+                    : 'bg-[#070b1e]/85 border-cyan-300/25 text-slate-200'
                 }`}
               >
                 {keyLabels[lane]}

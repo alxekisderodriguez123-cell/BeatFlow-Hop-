@@ -202,7 +202,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
       {/* Optional Search Bar */}
       {searchOpen && (
         <div className="px-4 sm:px-6 py-2.5 bg-slate-950/75 border-b border-slate-800 shrink-0">
-          <div className="max-w-3xl mx-auto relative">
+          <div className="max-w-5xl mx-auto relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -218,7 +218,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
 
       {/* Filter Tabs */}
       <div className="px-4 sm:px-6 pt-3 pb-2 shrink-0">
-        <div className="max-w-3xl mx-auto flex items-center gap-2">
+        <div className="max-w-5xl mx-auto flex items-center gap-2">
           <button
             type="button"
             onClick={() => setFilter('all')}
@@ -269,7 +269,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
 
       {/* Song List */}
       <div className="flex-1 overflow-y-auto beatflow-scroll px-4 sm:px-6 py-2">
-        <div className="max-w-3xl mx-auto flex flex-col gap-2.5 pb-4">
+        <div className="max-w-5xl mx-auto pb-4">
           {filteredSongs.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center py-12 px-6 rounded-3xl bg-slate-950/70 border border-dashed border-cyan-500/35 mt-4">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-500/25 to-fuchsia-500/25 border border-cyan-400/40 flex items-center justify-center mb-4">
@@ -297,7 +297,8 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               )}
             </div>
           ) : (
-            filteredSongs.map((song) => {
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
+            {filteredSongs.map((song) => {
               const isSelected = song.id === selectedSongId;
               const isPreviewing = song.id === previewId;
 
@@ -409,7 +410,8 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                   </div>
                 </div>
               );
-            })
+            })}
+            </div>
           )}
 
           {songs.length > 0 && (

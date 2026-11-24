@@ -1,7 +1,15 @@
 import * as THREE from 'three';
 import type { SongPalette } from '../../types/game';
+import {
+  addInkOutline,
+  createCelToonGradientMap,
+  createCrossStarTexture,
+  createIllustratedPalmShoreTexture,
+  createIllustratedSunTexture,
+  createStylizedCloudTexture,
+} from './illustratedLayers';
 import { SeededRng } from './seededRandom';
-import { createSoftGlowTexture, disposeObjectTree } from './sharedTextures';
+import { disposeObjectTree } from './sharedTextures';
 import type { WorldAtmosphere, WorldBuildOptions, WorldInstance, WorldUpdateContext } from './types';
 
 interface PalmEntry {
@@ -14,41 +22,48 @@ export class TropicalBeachWorld implements WorldInstance {
   public readonly theme = 'tropical' as const;
   public readonly group = new THREE.Group();
   public readonly atmosphere: WorldAtmosphere = {
-    backgroundColor: 0x0b0824,
-    fogColor: 0x1b0f3b,
-    fogDensity: 0.0095,
+    backgroundColor: 0x160e38,
+    fogColor: 0x3b1f62,
+    fogDensity: 0.0072,
     hemiSkyColor: 0xf472b6,
-    hemiGroundColor: 0x0f172a,
+    hemiGroundColor: 0x1e1b4b,
     dirLightColor: 0xfde68a,
   };
 
   private rng: SeededRng;
   private skyMat!: THREE.ShaderMaterial;
+  private sunSprite!: THREE.Sprite;
+  private sunMat!: THREE.SpriteMaterial;
+  private cloudSprites: Array<{ sprite: THREE.Sprite; baseX: number; speed: number }> = [];
   private oceanMat!: THREE.ShaderMaterial;
   private shoreMat!: THREE.ShaderMaterial;
   private palms: PalmEntry[] = [];
-  private fireflies!: THREE.Points;
-  private fireflyMat!: THREE.PointsMaterial;
-  private fireflyCount = 240;
+  private starPoints!: THREE.Points;
+  private starMat!: THREE.PointsMaterial;
+  private starCount = 220;
+  private toonGrad: THREE.DataTexture;
 
   constructor(opts: WorldBuildOptions) {
-    this.rng = new SeededRng(`${opts.seed}:tropical`);
-    this.buildSunsetMilkyWaySky();
-    this.buildBioluminescentOcean(opts.graphicsQuality);
-    this.buildWetShorelinesAndRocks();
-    this.buildSculptedPalmGroves();
-    this.buildTropicalFireflies();
+    this.rng = new SeededRng(`${opts.seed}:tropical-illustrated`);
+    this.toonGrad = createCelToonGradientMap();
+    this.starCount = opts.graphicsQuality === 'low' ? 95 : opts.graphicsQuality === 'medium' ? 160 : 220;
+
+    this.buildIllustratedTwilightSky();
+    this.buildSunsetOrbAndStylizedClouds();
+    this.buildBioluminescentSeaAndCoves(opts.graphicsQuality);
+    this.buildIllustratedParallaxPalmSilhouettes(opts.maxAnisotropy);
+    this.buildCelOutlinedHeroPalms(opts.graphicsQuality);
+    this.buildTwilightSparkles();
   }
 
-  private buildSunsetMilkyWaySky(): void {
-    const geo = new THREE.SphereGeometry(135, 32, 20);
-    const sunShift = this.rng.range(-0.08, 0.08);
+  private buildIllustratedTwilightSky(): void {
+    const geo = new THREE.SphereGeometry(142, 32, 20);
     this.skyMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
         uEnergy: { value: 0.25 },
+        uBass: { value: 0.2 },
         uBrightness: { value: 1.0 },
-        uSunX: { value: sunShift },
       },
       vertexShader: `
         varying vec3 vDir;
@@ -60,58 +75,25 @@ export class TropicalBeachWorld implements WorldInstance {
       fragmentShader: `
         uniform float uTime;
         uniform float uEnergy;
+        uniform float uBass;
         uniform float uBrightness;
-        uniform float uSunX;
         varying vec3 vDir;
 
-        float hash(vec2 p) {
-          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-        }
-        float noise(vec2 p) {
-          vec2 i = floor(p);
-          vec2 f = fract(p);
-          vec2 u = f * f * (3.0 - 2.0 * f);
-          return mix(
-            mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
-            mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
-            u.y
-          );
-        }
-
         void main() {
-          float y = clamp(vDir.y, -0.2, 1.0);
-          vec3 zenith = vec3(0.03, 0.05, 0.22);
-          vec3 midSky = vec3(0.28, 0.06, 0.42);
-          vec3 horizonPink = vec3(0.86, 0.14, 0.56);
-          vec3 horizonGold = vec3(1.0, 0.68, 0.22);
+          float y = clamp(vDir.y, -0.15, 1.0);
+          vec3 zenith = vec3(0.08, 0.12, 0.36);
+          vec3 upperViolet = vec3(0.24, 0.19, 0.56);
+          vec3 midRose = vec3(0.64, 0.28, 0.62);
+          vec3 horizonPeach = vec3(0.98, 0.62, 0.38);
 
-          vec3 col = mix(midSky, zenith, smoothstep(0.08, 0.52, y));
-          col = mix(horizonPink, col, smoothstep(0.01, 0.24, y));
+          vec3 col = mix(horizonPeach, midRose, smoothstep(0.01, 0.16, y));
+          col = mix(col, upperViolet, smoothstep(0.14, 0.36, y));
+          col = mix(col, zenith, smoothstep(0.32, 0.68, y));
 
-          // Glowing sunset core at horizon
-          vec2 sunPos = vec2(uSunX, 0.045);
-          float sunDist = length((vDir.xy - sunPos) * vec2(0.75, 1.8));
-          float sunGlow = exp(-sunDist * 4.5);
-          float sunDisc = smoothstep(0.09, 0.055, length(vDir.xy - vec2(uSunX, 0.06)));
-          col += horizonGold * sunGlow * (0.85 + uEnergy * 0.25);
-          col = mix(col, vec3(1.0, 0.92, 0.55), sunDisc * 0.9);
-
-          // Milky-Way cosmic ribbon rising above horizon (matching screenshot 6)
-          float bandCoord = vDir.x * 1.4 - vDir.y * 0.45 - 0.1;
-          float milky = exp(-bandCoord * bandCoord * 18.0) * smoothstep(0.05, 0.35, y);
-          float neb = noise(vDir.xy * 6.5 + vec2(0.0, uTime * 0.015));
-          col += mix(vec3(0.75, 0.18, 0.92), vec3(0.12, 0.85, 0.98), neb) * milky * (0.45 + neb * 0.4);
-
-          // Starfield in upper sky
-          float starCell = hash(floor(vDir.xy * 190.0));
-          float stars = step(0.994, starCell) * smoothstep(0.12, 0.45, y);
-          col += vec3(0.85, 0.94, 1.0) * stars * (0.65 + 0.35 * sin(uTime * 2.5 + starCell * 40.0));
-
-          // Sculpted sunset cloud silhouettes
-          float c = noise(vec2(vDir.x * 3.8 + uTime * 0.008, vDir.y * 12.0));
-          float cloudBand = smoothstep(0.46, 0.72, c) * smoothstep(0.0, 0.06, y) * smoothstep(0.28, 0.08, y);
-          vec3 cloudCol = mix(vec3(0.08, 0.03, 0.16), vec3(0.55, 0.14, 0.45), sunGlow);
-          col = mix(col, cloudCol, cloudBand * 0.72);
+          // Radiant sun glow behind central track vanishing point
+          float glowDist = length((vDir.xy - vec2(0.0, 0.055)) * vec2(0.62, 1.45));
+          float halo = exp(-glowDist * 4.2);
+          col += vec3(1.0, 0.85, 0.52) * halo * (0.48 + uBass * 0.24 + uEnergy * 0.18);
 
           gl_FragColor = vec4(col * uBrightness, 1.0);
         }
@@ -123,16 +105,57 @@ export class TropicalBeachWorld implements WorldInstance {
     this.group.add(new THREE.Mesh(geo, this.skyMat));
   }
 
-  private buildBioluminescentOcean(quality: string): void {
-    const segsX = quality === 'low' ? 48 : 84;
-    const segsZ = quality === 'low' ? 48 : 84;
-    const geo = new THREE.PlaneGeometry(180, 160, segsX, segsZ);
+  private buildSunsetOrbAndStylizedClouds(): void {
+    const sunTex = createIllustratedSunTexture('#fffbeb', '#fde047', '#fb7185', false);
+    this.sunMat = new THREE.SpriteMaterial({
+      map: sunTex,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: false,
+      fog: false,
+    });
+    this.sunSprite = new THREE.Sprite(this.sunMat);
+    this.sunSprite.position.set(0, 6.2, -92);
+    this.sunSprite.scale.set(28, 28, 1);
+    this.group.add(this.sunSprite);
+
+    const cloudLeftTex = createStylizedCloudTexture('#50317d', '#f9a8d4', '#231347', false);
+    const cloudRightTex = createStylizedCloudTexture('#4c2d76', '#fdba74', '#231347', true);
+
+    const cloudPlacements = [
+      { x: -34, y: 27, z: -86, w: 46, h: 17, tex: cloudLeftTex, speed: 0.25 },
+      { x: 35, y: 24, z: -84, w: 48, h: 18, tex: cloudRightTex, speed: -0.22 },
+      { x: -22, y: 17, z: -78, w: 34, h: 13, tex: cloudRightTex, speed: 0.16 },
+      { x: 24, y: 16, z: -76, w: 34, h: 13, tex: cloudLeftTex, speed: -0.18 },
+      { x: 0, y: 34, z: -96, w: 54, h: 18, tex: cloudLeftTex, speed: 0.1 },
+    ];
+
+    for (const c of cloudPlacements) {
+      const mat = new THREE.SpriteMaterial({
+        map: c.tex,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        fog: false,
+      });
+      const sp = new THREE.Sprite(mat);
+      sp.position.set(c.x, c.y, c.z);
+      sp.scale.set(c.w, c.h, 1);
+      this.group.add(sp);
+      this.cloudSprites.push({ sprite: sp, baseX: c.x, speed: c.speed });
+    }
+  }
+
+  private buildBioluminescentSeaAndCoves(quality: string): void {
+    const segs = quality === 'low' ? 38 : 64;
+    const geo = new THREE.PlaneGeometry(190, 165, segs, segs);
     geo.rotateX(-Math.PI / 2);
 
     this.oceanMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
         uBass: { value: 0.2 },
+        uKick: { value: 0 },
         uEnergy: { value: 0.25 },
         uBrightness: { value: 1.0 },
       },
@@ -144,11 +167,10 @@ export class TropicalBeachWorld implements WorldInstance {
 
         void main() {
           vec3 pos = position;
-          float w1 = sin(pos.z * 0.22 + uTime * 1.9 + pos.x * 0.08) * (0.28 + uBass * 0.24);
-          float w2 = cos(pos.x * 0.18 - uTime * 1.35 + pos.z * 0.14) * 0.16;
-          float roll = sin(pos.z * 0.45 + uTime * 2.6) * 0.08;
-          pos.y += w1 + w2 + roll;
-          vWaveCrest = clamp((w1 + w2 + 0.25) * 1.25, 0.0, 1.0);
+          float w1 = sin(pos.z * 0.24 + uTime * 1.8) * (0.2 + uBass * 0.18);
+          float w2 = cos(pos.x * 0.2 - uTime * 1.2) * 0.12;
+          pos.y += w1 + w2;
+          vWaveCrest = clamp((w1 + w2 + 0.22) * 1.4, 0.0, 1.0);
           vec4 wp = modelMatrix * vec4(pos, 1.0);
           vWorldPos = wp.xyz;
           gl_Position = projectionMatrix * viewMatrix * wp;
@@ -157,30 +179,30 @@ export class TropicalBeachWorld implements WorldInstance {
       fragmentShader: `
         uniform float uTime;
         uniform float uBass;
+        uniform float uKick;
         uniform float uEnergy;
         uniform float uBrightness;
         varying vec3 vWorldPos;
         varying float vWaveCrest;
 
         void main() {
-          vec3 deepWater = vec3(0.02, 0.05, 0.20);
-          vec3 midWater = vec3(0.05, 0.16, 0.42);
-          vec3 bioCyan = vec3(0.04, 0.88, 0.98);
-          vec3 sunReflect = vec3(1.0, 0.58, 0.24);
-          vec3 pinkReflect = vec3(0.88, 0.18, 0.62);
+          vec3 deepIndigo = vec3(0.16, 0.16, 0.45);
+          vec3 twilightCyan = vec3(0.18, 0.56, 0.84);
+          vec3 sunsetGold = vec3(1.0, 0.72, 0.42);
+          vec3 lavenderFoam = vec3(0.75, 0.52, 0.96);
 
-          float distFade = exp(-abs(vWorldPos.z + 15.0) * 0.011);
-          vec3 col = mix(deepWater, midWater, vWaveCrest * 0.8);
+          float distFade = exp(-abs(vWorldPos.z + 18.0) * 0.0095);
+          vec3 col = mix(deepIndigo, twilightCyan, vWaveCrest * 0.65);
 
-          // Bioluminescent cyan crest foam flowing toward shoreline
-          float foamRipple = sin(vWorldPos.z * 0.85 + uTime * 2.8 + sin(vWorldPos.x * 0.35) * 2.0);
-          float bioMask = smoothstep(0.55, 0.95, vWaveCrest) * smoothstep(0.15, 0.85, foamRipple * 0.5 + 0.5);
-          col += bioCyan * bioMask * (0.55 + uBass * 0.55) * distFade;
+          // Crisp stylized ripple bands (illustrated cel bands)
+          float bandWave = sin(vWorldPos.z * 0.9 + uTime * 2.2 + sin(vWorldPos.x * 0.25) * 1.6);
+          float celFoam = step(0.66, bandWave * 0.5 + 0.5);
+          col += lavenderFoam * celFoam * (0.34 + uKick * 0.35 + uBass * 0.22) * distFade;
 
-          // Center sunset water reflection shimmer path
-          float sunPath = exp(-abs(vWorldPos.x) * 0.14);
-          float sparkle = smoothstep(0.45, 0.98, sin(vWorldPos.z * 1.7 + uTime * 3.4) * cos(vWorldPos.x * 1.2 - uTime * 1.8));
-          col += mix(pinkReflect, sunReflect, sunPath) * sunPath * (0.28 + sparkle * 0.48 + uEnergy * 0.22);
+          // Center warm golden sunset reflection path on water
+          float sunPath = exp(-abs(vWorldPos.x) * 0.11);
+          float shimmer = step(0.45, sin(vWorldPos.z * 2.0 + uTime * 3.1) * cos(vWorldPos.x * 0.85));
+          col += sunsetGold * sunPath * (0.38 + shimmer * 0.44 + uEnergy * 0.2);
 
           gl_FragColor = vec4(col * uBrightness, 1.0);
         }
@@ -190,19 +212,17 @@ export class TropicalBeachWorld implements WorldInstance {
     const ocean = new THREE.Mesh(geo, this.oceanMat);
     ocean.position.set(0, -1.35, -56);
     this.group.add(ocean);
-  }
 
-  private buildWetShorelinesAndRocks(): void {
-    // Organic curving sandy shorebanks flanking left & right sides (outside track x = ±3.5)
-    const shoreGeo = new THREE.PlaneGeometry(34, 130, 24, 36);
+    // Stylized inked coastal coves left & right
+    const shoreGeo = new THREE.PlaneGeometry(36, 130, 18, 28);
     shoreGeo.rotateX(-Math.PI / 2);
     const pos = shoreGeo.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
-      const dune = Math.sin(z * 0.12) * 0.4 + Math.cos(x * 0.25 + z * 0.08) * 0.25;
-      const slope = Math.max(0, (Math.abs(x) - 4.0) * 0.08);
-      pos.setY(i, dune + slope);
+      const curveCoast = Math.sin(z * 0.11) * 0.45 + Math.cos(x * 0.22) * 0.22;
+      const elevation = Math.max(0, (Math.abs(x) - 5.2) * 0.09);
+      pos.setY(i, curveCoast + elevation);
     }
     shoreGeo.computeVertexNormals();
 
@@ -226,129 +246,139 @@ export class TropicalBeachWorld implements WorldInstance {
         uniform float uBrightness;
         varying vec3 vWorldPos;
         void main() {
-          float wetBand = smoothstep(14.0, 5.5, abs(vWorldPos.x));
-          vec3 drySand = vec3(0.08, 0.04, 0.16);
-          vec3 wetReflect = mix(vec3(0.45, 0.12, 0.42), vec3(0.05, 0.65, 0.85), 0.5 + 0.5 * sin(vWorldPos.z * 0.15 + uTime));
-          vec3 col = mix(drySand, wetReflect * (0.45 + uEnergy * 0.35), wetBand * 0.65);
+          float shoreLine = smoothstep(14.0, 7.2, abs(vWorldPos.x) + sin(vWorldPos.z * 0.18) * 1.4);
+          float foamLine = smoothstep(0.18, 0.0, abs(abs(vWorldPos.x) + sin(vWorldPos.z * 0.18) * 1.4 - 9.2));
+          vec3 sandCol = vec3(0.24, 0.15, 0.42);
+          vec3 wetSand = vec3(0.36, 0.28, 0.65);
+          vec3 col = mix(sandCol, wetSand, shoreLine * 0.72);
+          col += vec3(0.55, 0.92, 1.0) * foamLine * (0.55 + uEnergy * 0.35);
           gl_FragColor = vec4(col * uBrightness, 1.0);
         }
       `,
     });
 
-    [-21.5, 21.5].forEach((x) => {
+    [-23, 23].forEach((x) => {
       const shore = new THREE.Mesh(shoreGeo, this.shoreMat);
       shore.position.set(x, -1.42, -46);
       this.group.add(shore);
     });
-
-    // Sculpted coastal basalt rock clusters
-    const rockGeo = new THREE.IcosahedronGeometry(1.1, 1);
-    const rPos = rockGeo.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < rPos.count; i++) {
-      const vx = rPos.getX(i);
-      const vy = rPos.getY(i);
-      const vz = rPos.getZ(i);
-      const n = 0.78 + 0.35 * Math.sin(vx * 3.1 + vy * 2.7 + vz * 1.9);
-      rPos.setXYZ(i, vx * n * 1.3, vy * n * 0.72, vz * n);
-    }
-    rockGeo.computeVertexNormals();
-
-    const rockMat = new THREE.MeshStandardMaterial({
-      color: 0x16112b,
-      roughness: 0.75,
-      metalness: 0.15,
-    });
-
-    for (let i = 0; i < 16; i++) {
-      const side = i % 2 === 0 ? -1 : 1;
-      const rock = new THREE.Mesh(rockGeo, rockMat);
-      rock.position.set(
-        side * this.rng.range(6.8, 16.5),
-        -1.18,
-        this.rng.range(-78, -6),
-      );
-      rock.rotation.set(this.rng.range(0, 0.3), this.rng.range(0, Math.PI * 2), 0);
-      rock.scale.setScalar(this.rng.range(0.65, 1.85));
-      this.group.add(rock);
-    }
   }
 
-  private buildSculptedPalmGroves(): void {
-    const trunkMat = new THREE.MeshStandardMaterial({
-      color: 0x1b122b,
-      roughness: 0.85,
-      metalness: 0.1,
+  private buildIllustratedParallaxPalmSilhouettes(anisotropy: number): void {
+    const texLeft = createIllustratedPalmShoreTexture(this.rng, anisotropy, {
+      silhouetteHex: '#25174a',
+      rimHex: '#f472b6',
+      inkHex: '#0d0720',
+      leanRight: true,
     });
-    const frondMat = new THREE.MeshStandardMaterial({
-      color: 0x0d2138,
-      emissive: 0x0c4a6e,
-      emissiveIntensity: 0.25,
-      roughness: 0.55,
+    const texRight = createIllustratedPalmShoreTexture(this.rng, anisotropy, {
+      silhouetteHex: '#25174a',
+      rimHex: '#fbbf24',
+      inkHex: '#0d0720',
+      leanRight: false,
+    });
+
+    const leftMat = new THREE.MeshBasicMaterial({
+      map: texLeft,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const rightMat = new THREE.MeshBasicMaterial({
+      map: texRight,
+      transparent: true,
+      depthWrite: false,
       side: THREE.DoubleSide,
     });
 
-    // Shared curved frond blade geometry (arched tapered leaf)
+    const panels = [
+      { x: -18, y: 4.5, z: -64, w: 30, h: 15, mat: leftMat, rotY: 0.14 },
+      { x: 18, y: 4.5, z: -64, w: 30, h: 15, mat: rightMat, rotY: -0.14 },
+      { x: -24, y: 5.5, z: -44, w: 28, h: 14, mat: leftMat, rotY: 0.25 },
+      { x: 24, y: 5.5, z: -44, w: 28, h: 14, mat: rightMat, rotY: -0.25 },
+    ];
+    for (const p of panels) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(p.w, p.h), p.mat);
+      m.position.set(p.x, p.y, p.z);
+      m.rotation.y = p.rotY;
+      this.group.add(m);
+    }
+  }
+
+  private buildCelOutlinedHeroPalms(quality: string): void {
+    const trunkMat = new THREE.MeshToonMaterial({
+      color: 0x2c1b4e,
+      gradientMap: this.toonGrad,
+    });
+    const frondMat = new THREE.MeshToonMaterial({
+      color: 0x3b2366,
+      emissive: 0x86198f,
+      emissiveIntensity: 0.22,
+      gradientMap: this.toonGrad,
+      side: THREE.DoubleSide,
+    });
+    const rockMat = new THREE.MeshToonMaterial({
+      color: 0x261a48,
+      gradientMap: this.toonGrad,
+    });
+
+    // Stylized inked coastal rocks
+    const rockGeo = new THREE.IcosahedronGeometry(1.0, 0);
+    for (let i = 0; i < 8; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const rock = new THREE.Mesh(rockGeo, rockMat);
+      rock.position.set(side * this.rng.range(7.2, 14.5), -1.15, -8 - i * 6.5);
+      rock.scale.set(this.rng.range(0.9, 1.8), this.rng.range(0.55, 1.0), this.rng.range(0.9, 1.5));
+      addInkOutline(rock, 0x0b061d, 1.06);
+      this.group.add(rock);
+    }
+
+    // Shared curved stylized palm frond blade
     const frondShape = new THREE.Shape();
     frondShape.moveTo(0, 0);
-    frondShape.quadraticCurveTo(0.45, 1.2, 0.14, 2.85);
-    frondShape.lineTo(0, 3.15);
-    frondShape.lineTo(-0.14, 2.85);
-    frondShape.quadraticCurveTo(-0.45, 1.2, 0, 0);
-    const frondGeo = new THREE.ShapeGeometry(frondShape, 6);
+    frondShape.quadraticCurveTo(0.48, 1.25, 0.14, 2.9);
+    frondShape.lineTo(0, 3.25);
+    frondShape.lineTo(-0.14, 2.9);
+    frondShape.quadraticCurveTo(-0.48, 1.25, 0, 0);
+    const frondGeo = new THREE.ShapeGeometry(frondShape, 5);
     frondGeo.rotateX(Math.PI * 0.42);
-    // Curve downward along length
     const fPos = frondGeo.attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < fPos.count; i++) {
       const z = fPos.getZ(i);
-      fPos.setY(i, fPos.getY(i) - z * z * 0.13);
+      fPos.setY(i, fPos.getY(i) - z * z * 0.12);
     }
     frondGeo.computeVertexNormals();
 
-    const palmCount = 18;
+    const palmCount = quality === 'low' ? 6 : 10;
     for (let i = 0; i < palmCount; i++) {
       const side = i % 2 === 0 ? -1 : 1;
       const palm = new THREE.Group();
-
-      const height = this.rng.range(6.2, 10.5);
-      const lean = -side * this.rng.range(1.2, 2.4); // Lean organically over the water/track vista
+      const height = this.rng.range(6.4, 9.6);
+      const lean = -side * this.rng.range(1.2, 2.3);
       const curve = new THREE.CatmullRomCurve3([
         new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(lean * 0.3, height * 0.38, this.rng.range(-0.4, 0.4)),
+        new THREE.Vector3(lean * 0.3, height * 0.38, 0),
         new THREE.Vector3(lean * 0.78, height * 0.76, 0),
         new THREE.Vector3(lean, height, 0),
       ]);
-      const trunkGeo = new THREE.TubeGeometry(curve, 12, 0.16, 7, false);
-      // Taper trunk from base to crown
-      const tPos = trunkGeo.attributes.position as THREE.BufferAttribute;
-      for (let v = 0; v < tPos.count; v++) {
-        const yFrac = THREE.MathUtils.clamp(tPos.getY(v) / height, 0, 1);
-        const center = curve.getPoint(yFrac);
-        const taper = THREE.MathUtils.lerp(1.45, 0.55, yFrac);
-        tPos.setX(v, center.x + (tPos.getX(v) - center.x) * taper);
-        tPos.setZ(v, center.z + (tPos.getZ(v) - center.z) * taper);
-      }
-      trunkGeo.computeVertexNormals();
-
+      const trunkGeo = new THREE.TubeGeometry(curve, 10, 0.15, 6, false);
       const trunkMesh = new THREE.Mesh(trunkGeo, trunkMat);
+      addInkOutline(trunkMesh, 0x0b061d, 1.12);
       palm.add(trunkMesh);
 
       const crown = new THREE.Group();
       crown.position.set(lean, height, 0);
-      const fronds = 8;
+      const fronds = 7;
       for (let f = 0; f < fronds; f++) {
         const frond = new THREE.Mesh(frondGeo, frondMat);
-        frond.rotation.y = (f / fronds) * Math.PI * 2 + this.rng.range(-0.2, 0.2);
-        frond.rotation.x = this.rng.range(-0.18, 0.22);
-        frond.scale.setScalar(this.rng.range(0.85, 1.2));
+        frond.rotation.y = (f / fronds) * Math.PI * 2 + this.rng.range(-0.15, 0.15);
+        frond.rotation.x = this.rng.range(-0.14, 0.18);
+        frond.scale.setScalar(this.rng.range(0.88, 1.18));
         crown.add(frond);
       }
       palm.add(crown);
 
-      palm.position.set(
-        side * this.rng.range(7.2, 16.0),
-        -1.35,
-        -6 - i * 4.2 + this.rng.range(-1.2, 1.2),
-      );
+      palm.position.set(side * this.rng.range(7.6, 13.8), -1.35, -7 - i * 5.2);
       this.group.add(palm);
 
       this.palms.push({
@@ -359,17 +389,18 @@ export class TropicalBeachWorld implements WorldInstance {
     }
   }
 
-  private buildTropicalFireflies(): void {
-    const pos = new Float32Array(this.fireflyCount * 3);
-    const cols = new Float32Array(this.fireflyCount * 3);
-    const c1 = new THREE.Color('#22d3ee');
-    const c2 = new THREE.Color('#fbbf24');
-    const c3 = new THREE.Color('#f472b6');
+  private buildTwilightSparkles(): void {
+    const pos = new Float32Array(this.starCount * 3);
+    const cols = new Float32Array(this.starCount * 3);
+    const c1 = new THREE.Color('#ffffff');
+    const c2 = new THREE.Color('#fde68a');
+    const c3 = new THREE.Color('#a5f3fc');
 
-    for (let i = 0; i < this.fireflyCount; i++) {
-      pos[i * 3] = this.rng.range(-28, 28);
-      pos[i * 3 + 1] = this.rng.range(-0.4, 9.5);
-      pos[i * 3 + 2] = this.rng.range(-80, 6);
+    for (let i = 0; i < this.starCount; i++) {
+      const highSky = i < this.starCount * 0.65;
+      pos[i * 3] = this.rng.range(-48, 48);
+      pos[i * 3 + 1] = highSky ? this.rng.range(10, 36) : this.rng.range(0.5, 9);
+      pos[i * 3 + 2] = this.rng.range(-88, 4);
       const c = i % 3 === 0 ? c1 : i % 3 === 1 ? c2 : c3;
       cols[i * 3] = c.r;
       cols[i * 3 + 1] = c.g;
@@ -380,21 +411,21 @@ export class TropicalBeachWorld implements WorldInstance {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
 
-    this.fireflyMat = new THREE.PointsMaterial({
-      size: 0.26,
-      map: createSoftGlowTexture(),
+    this.starMat = new THREE.PointsMaterial({
+      size: 0.42,
+      map: createCrossStarTexture(),
       vertexColors: true,
       transparent: true,
-      opacity: 0.65,
+      opacity: 0.85,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    this.fireflies = new THREE.Points(geo, this.fireflyMat);
-    this.group.add(this.fireflies);
+    this.starPoints = new THREE.Points(geo, this.starMat);
+    this.group.add(this.starPoints);
   }
 
   public setPalette(_palette: SongPalette): void {
-    // Tropical Beach preserves its sunset & bioluminescent cyan coastal identity
+    // Tropical Beach preserves its vibrant twilight sunset illustrated palette
   }
 
   public update(ctx: WorldUpdateContext): void {
@@ -405,6 +436,8 @@ export class TropicalBeachWorld implements WorldInstance {
       bass,
       high,
       energy,
+      kickPulse = 0,
+      hihatPulse = 0,
       inSilence,
       reactiveEnabled,
       visualIntensity,
@@ -413,20 +446,34 @@ export class TropicalBeachWorld implements WorldInstance {
     } = ctx;
 
     const visMult = visualIntensity === 'low' ? 0.45 : visualIntensity === 'medium' ? 0.75 : 1.0;
-    const partMult = particleIntensity === 'low' ? 0.35 : particleIntensity === 'medium' ? 0.68 : 0.95;
+    const partMult = particleIntensity === 'low' ? 0.38 : particleIntensity === 'medium' ? 0.7 : 1.0;
     const bright = THREE.MathUtils.clamp(brightness, 0.5, 1.35);
     const silenceDamp = inSilence ? 0.35 : 1.0;
 
     const effBass = reactiveEnabled ? bass * visMult * silenceDamp : 0.16;
     const effHigh = reactiveEnabled ? high * visMult * silenceDamp : 0.14;
     const effEnergy = reactiveEnabled ? energy * visMult * silenceDamp : 0.18;
+    const effKick = reactiveEnabled ? kickPulse * visMult * silenceDamp : 0;
+    const effHihat = reactiveEnabled ? hihatPulse * visMult * silenceDamp : 0;
 
     this.skyMat.uniforms.uTime.value = elapsed;
     this.skyMat.uniforms.uEnergy.value = effEnergy;
+    this.skyMat.uniforms.uBass.value = effBass;
     this.skyMat.uniforms.uBrightness.value = bright;
+
+    // Gentle sunset solar breathing synced cleanly to Kick/Bass
+    const sunScale = 27.5 + effBass * 2.2 + effKick * 2.0;
+    this.sunSprite.scale.set(sunScale, sunScale, 1);
+    this.sunMat.opacity = Math.min(1, (0.9 + effBass * 0.1) * bright);
+
+    // Slow illustrated cloud drift
+    for (const c of this.cloudSprites) {
+      c.sprite.position.x = c.baseX + Math.sin(elapsed * 0.08 + c.baseX) * 2.4;
+    }
 
     this.oceanMat.uniforms.uTime.value = elapsed;
     this.oceanMat.uniforms.uBass.value = effBass;
+    this.oceanMat.uniforms.uKick.value = effKick;
     this.oceanMat.uniforms.uEnergy.value = effEnergy;
     this.oceanMat.uniforms.uBrightness.value = bright;
 
@@ -434,29 +481,30 @@ export class TropicalBeachWorld implements WorldInstance {
     this.shoreMat.uniforms.uEnergy.value = effEnergy;
     this.shoreMat.uniforms.uBrightness.value = bright;
 
-    // Gentle tropical breeze sway on palm trees
-    const swayAmp = 0.032 + effBass * 0.028;
+    // Gentle tropical breeze sway on cel-shaded palms
+    const swayAmp = 0.03 + effBass * 0.024 + effKick * 0.014;
     for (const p of this.palms) {
-      p.group.rotation.z = p.baseRotZ + Math.sin(elapsed * 1.2 + p.phase) * swayAmp;
+      p.group.rotation.z = p.baseRotZ + Math.sin(elapsed * 1.15 + p.phase) * swayAmp;
     }
 
-    // Drift glowing coastal mist & fireflies
-    const activeRatio = particleIntensity === 'low' ? 0.32 : particleIntensity === 'medium' ? 0.65 : 1.0;
-    const activeCount = Math.floor(this.fireflyCount * activeRatio);
-    this.fireflies.geometry.setDrawRange(0, activeCount);
-    this.fireflyMat.opacity = (0.34 + effHigh * 0.32) * partMult * bright;
+    // Crisp twinkling stars & water sparkles (subtle hihat glint boost)
+    const activeRatio = particleIntensity === 'low' ? 0.34 : particleIntensity === 'medium' ? 0.68 : 1.0;
+    const activeCount = Math.floor(this.starCount * activeRatio);
+    this.starPoints.geometry.setDrawRange(0, activeCount);
+    this.starMat.opacity = Math.min(0.95, (0.55 + effHigh * 0.25 + effHihat * 0.25) * partMult * bright);
 
-    const pAttr = this.fireflies.geometry.attributes.position as THREE.BufferAttribute;
-    const driftSpeed = mode === 'paused' ? 0 : 2.8 + effEnergy * 4.2;
+    const pAttr = this.starPoints.geometry.attributes.position as THREE.BufferAttribute;
+    const driftSpeed = mode === 'paused' ? 0 : 1.8 + effEnergy * 3.0;
     for (let i = 0; i < activeCount; i++) {
       let z = pAttr.getZ(i) + driftSpeed * dt;
-      if (z > 8) z = -80;
+      if (z > 6) z = -88;
       pAttr.setZ(i, z);
     }
     pAttr.needsUpdate = true;
   }
 
   public dispose(): void {
+    this.toonGrad.dispose();
     disposeObjectTree(this.group);
   }
 }

@@ -32,6 +32,12 @@ import {
   resolveNoteShape,
 } from './presets';
 import type { WorldAtmosphere } from './environments/types';
+import {
+  createFlameTrailTexture,
+  createTileInnerRingTexture,
+} from './environments/sharedTextures';
+import { resolveNoteColor } from './noteColorPalette';
+import { MusicReactiveLighting } from './MusicReactiveLighting';
 
 export const HIT_LINE_Z = 1.6;
 export const SPAWN_Z = -48;
@@ -81,6 +87,7 @@ interface PooledNoteSlot {
   group: THREE.Group;
   coreMesh: THREE.Mesh;
   trimMesh: THREE.Mesh;
+  topRingMesh: THREE.Mesh;
   reflectionMesh: THREE.Mesh;
   trailMesh: THREE.Mesh;
   holdTailMesh: THREE.Mesh;
@@ -147,6 +154,8 @@ interface ShockwaveSlot {
   ringMat: THREE.MeshBasicMaterial;
   flare: THREE.Mesh;
   flareMat: THREE.MeshBasicMaterial;
+  flame: THREE.Mesh;
+  flameMat: THREE.MeshBasicMaterial;
   life: number;
   maxLife: number;
   expandScale: number;
@@ -216,30 +225,32 @@ function createCircuitTrackTextures(): {
   const rCtx = roughCanvas.getContext('2d')!;
 
   const bg = ctx.createLinearGradient(0, 0, size, 0);
-  bg.addColorStop(0, '#02040b');
-  bg.addColorStop(0.5, '#050918');
-  bg.addColorStop(1, '#02040b');
+  bg.addColorStop(0, '#120b2e');
+  bg.addColorStop(0.24, '#1b1347');
+  bg.addColorStop(0.5, '#221859');
+  bg.addColorStop(0.76, '#1b1347');
+  bg.addColorStop(1, '#120b2e');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, size, size);
 
-  rCtx.fillStyle = '#4c4c4c';
+  rCtx.fillStyle = '#585858';
   rCtx.fillRect(0, 0, size, size);
 
   const laneCenters = [128, 384, 640, 896];
   laneCenters.forEach((cx, idx) => {
-    const laneGrad = ctx.createLinearGradient(cx - 110, 0, cx + 110, 0);
-    const col = idx % 2 === 0 ? 'rgba(34, 211, 238, 0.032)' : 'rgba(232, 121, 249, 0.032)';
+    const laneGrad = ctx.createLinearGradient(cx - 116, 0, cx + 116, 0);
+    const col = idx % 2 === 0 ? 'rgba(56, 189, 248, 0.08)' : 'rgba(232, 121, 249, 0.075)';
     laneGrad.addColorStop(0, 'rgba(0,0,0,0)');
     laneGrad.addColorStop(0.5, col);
     laneGrad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = laneGrad;
-    ctx.fillRect(cx - 110, 0, 220, size);
+    ctx.fillRect(cx - 116, 0, 232, size);
 
-    rCtx.fillStyle = '#6e6e6e';
+    rCtx.fillStyle = '#767676';
     rCtx.fillRect(cx - 116, 0, 6, size);
     rCtx.fillRect(cx + 110, 0, 6, size);
 
-    ctx.strokeStyle = idx % 2 === 0 ? 'rgba(56, 189, 248, 0.08)' : 'rgba(217, 70, 239, 0.07)';
+    ctx.strokeStyle = idx % 2 === 0 ? 'rgba(56, 189, 248, 0.13)' : 'rgba(244, 114, 182, 0.12)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(cx - 48, 0);
@@ -251,8 +262,12 @@ function createCircuitTrackTextures(): {
     ctx.stroke();
   });
 
+  // Crisp subtle center perspective guide streak
+  ctx.fillStyle = 'rgba(192, 132, 252, 0.065)';
+  ctx.fillRect(size * 0.5 - 6, 0, 12, size);
+
   for (let y = 0; y < size; y += 128) {
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.095)';
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.14)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(0, y);
@@ -430,6 +445,8 @@ export class BeatflowScene {
   private roadRoughTex: THREE.CanvasTexture;
   private noteReflectionTex: THREE.CanvasTexture;
   private pulseGradientTex: THREE.CanvasTexture;
+  private tileInnerRingTex: THREE.CanvasTexture;
+  private flameTrailTex: THREE.CanvasTexture;
   private roadMat!: THREE.MeshStandardMaterial;
   private lanePadMeshes: THREE.Mesh[] = [];
   private lanePadRingMats: THREE.MeshBasicMaterial[] = [];
@@ -471,6 +488,7 @@ export class BeatflowScene {
   private noteAccentColor = new THREE.Color('#fbbf24');
   private chromaticPhase = 0;
   private chromaticEngine = new ChromaticEngine();
+  private reactiveLighting = new MusicReactiveLighting();
   private chromaticColA = new THREE.Color('#22d3ee');
   private chromaticColB = new THREE.Color('#e879f9');
   private chromaticColAccent = new THREE.Color('#6366f1');
@@ -492,6 +510,7 @@ export class BeatflowScene {
   > = {} as Record<ConcreteNoteShape, { core: THREE.BufferGeometry; trim: THREE.BufferGeometry }>;
   private reflectionGeo!: THREE.PlaneGeometry;
   private trailGeo!: THREE.PlaneGeometry;
+  private topRingGeo!: THREE.PlaneGeometry;
   private holdTailGeo!: THREE.BoxGeometry;
   private holdCapGeo!: THREE.CylinderGeometry;
   private flickArrowGeo!: THREE.ExtrudeGeometry;
@@ -556,6 +575,9 @@ export class BeatflowScene {
   private smoothedEnergy = 0;
   private prevRawBass = 0;
   private bassTransientCooldown = 0;
+  private kickPulse = 0;
+  private snarePulse = 0;
+  private hihatPulse = 0;
   private roadScrollOffset = 0;
   private defeatFlash = 0;
   private dropScreenPulse = 0;
@@ -624,6 +646,8 @@ export class BeatflowScene {
     this.roadRoughTex.anisotropy = maxAniso;
     this.noteReflectionTex = createNoteReflectionTexture();
     this.pulseGradientTex = createLongitudinalPulseTexture();
+    this.tileInnerRingTex = createTileInnerRingTexture();
+    this.flameTrailTex = createFlameTrailTexture();
 
     this.setupLights();
     this.scene.add(this.trackGroup);
@@ -945,6 +969,8 @@ export class BeatflowScene {
       24,
     );
 
+    const padBevelGeo = new THREE.PlaneGeometry(laneStep * 0.8, 0.62);
+
     for (let i = 0; i < laneCount; i++) {
       const isEven = i % 2 === 0;
       const laneCol = isEven ? this.primaryColor : this.secondaryColor;
@@ -953,7 +979,7 @@ export class BeatflowScene {
       const stripMat = new THREE.MeshBasicMaterial({
         color: laneCol,
         transparent: true,
-        opacity: 0.015,
+        opacity: 0.02,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
@@ -967,14 +993,14 @@ export class BeatflowScene {
       const leftEdgeMat = new THREE.MeshBasicMaterial({
         color: laneCol,
         transparent: true,
-        opacity: 0.14,
+        opacity: 0.18,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
       const rightEdgeMat = new THREE.MeshBasicMaterial({
         color: laneCol,
         transparent: true,
-        opacity: 0.14,
+        opacity: 0.18,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
@@ -989,28 +1015,34 @@ export class BeatflowScene {
       this.trackGroup.add(leftEdge, rightEdge);
 
       const frameMat = new THREE.MeshStandardMaterial({
-        color: 0x090f24,
+        color: 0x0f1736,
         emissive: noteCol,
-        emissiveIntensity: 0.38,
-        metalness: 0.88,
-        roughness: 0.2,
+        emissiveIntensity: 0.42,
+        metalness: 0.72,
+        roughness: 0.22,
       });
       const padFrame = new THREE.Mesh(padOuterGeo, frameMat);
       padFrame.position.set(laneX[i], 0.036, HIT_LINE_Z);
 
       const ringMat = new THREE.MeshBasicMaterial({
+        map: this.tileInnerRingTex,
         color: noteCol,
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.65,
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
       this.lanePadRingMats.push(ringMat);
-      const ring = new THREE.Mesh(padRingGeo, ringMat);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.set(0, 0.042, 0);
-      padFrame.add(ring);
+      const padBevel = new THREE.Mesh(padBevelGeo, ringMat);
+      padBevel.rotation.x = -Math.PI / 2;
+      padBevel.position.set(0, 0.044, 0);
+      padFrame.add(padBevel);
+
+      const innerHalo = new THREE.Mesh(padRingGeo, ringMat);
+      innerHalo.rotation.x = -Math.PI / 2;
+      innerHalo.position.set(0, 0.041, 0);
+      padFrame.add(innerHalo);
 
       this.trackGroup.add(padFrame);
       this.lanePadMeshes.push(padFrame);
@@ -1084,9 +1116,10 @@ export class BeatflowScene {
       });
     }
 
-    // Pooled expanding hit shockwaves + localized radial hit flares (8 slots)
+    // Pooled expanding hit shockwaves + localized radial hit flares + upward stylized flame hit plumes (8 slots)
     const hitWaveGeo = new THREE.RingGeometry(0.32, 0.48, 28);
     const hitFlareGeo = new THREE.CircleGeometry(laneStep * 0.56, 24);
+    const hitFlameGeo = new THREE.PlaneGeometry(laneStep * 0.82, 2.35);
     for (let i = 0; i < 8; i++) {
       const ringMat = new THREE.MeshBasicMaterial({
         color: this.primaryColor,
@@ -1112,13 +1145,28 @@ export class BeatflowScene {
       flare.rotation.x = -Math.PI / 2;
       flare.visible = false;
 
-      this.trackGroup.add(ring, flare);
+      const flameMat = new THREE.MeshBasicMaterial({
+        map: this.flameTrailTex,
+        color: 0xfbbf24,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const flame = new THREE.Mesh(hitFlameGeo, flameMat);
+      flame.rotation.x = -Math.PI / 2 + 0.16;
+      flame.visible = false;
+
+      this.trackGroup.add(ring, flare, flame);
       this.shockwavePool.push({
         active: false,
         ring,
         ringMat,
         flare,
         flareMat,
+        flame,
+        flameMat,
         life: 0,
         maxLife: 0.34,
         expandScale: 3.4,
@@ -1276,6 +1324,7 @@ export class BeatflowScene {
 
     this.reflectionGeo = new THREE.PlaneGeometry(1.5, 1.3);
     this.trailGeo = new THREE.PlaneGeometry(0.72, 2.4);
+    this.topRingGeo = new THREE.PlaneGeometry(1.06, 0.68);
 
     // Special mechanics helper geometries
     this.holdTailGeo = new THREE.BoxGeometry(0.52, 0.1, 1);
@@ -1376,8 +1425,20 @@ export class BeatflowScene {
         opacity: 0.9,
       });
 
+      const topRingMat = new THREE.MeshBasicMaterial({
+        map: this.tileInnerRingTex,
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.78,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+
       const coreMesh = new THREE.Mesh(geos.core, coreMat);
       const trimMesh = new THREE.Mesh(geos.trim, trimMat);
+      const topRingMesh = new THREE.Mesh(this.topRingGeo, topRingMat);
+      topRingMesh.rotation.x = -Math.PI / 2;
+      topRingMesh.position.y = 0.132;
       const reflectionMesh = new THREE.Mesh(this.reflectionGeo, reflMat);
       reflectionMesh.rotation.x = -Math.PI / 2;
       reflectionMesh.position.y = -0.185;
@@ -1406,6 +1467,7 @@ export class BeatflowScene {
       group.add(
         coreMesh,
         trimMesh,
+        topRingMesh,
         reflectionMesh,
         trailMesh,
         holdTailMesh,
@@ -1423,6 +1485,7 @@ export class BeatflowScene {
         group,
         coreMesh,
         trimMesh,
+        topRingMesh,
         reflectionMesh,
         trailMesh,
         holdTailMesh,
@@ -1689,6 +1752,10 @@ export class BeatflowScene {
     this.activePointerLane = null;
     this.prevRawBass = 0;
     this.bassTransientCooldown = 0;
+    this.reactiveLighting.reset();
+    this.kickPulse = 0;
+    this.snarePulse = 0;
+    this.hihatPulse = 0;
     this.prevSection = 'groove';
     this.currentSection = 'groove';
     this.isMenuMode = false;
@@ -1721,6 +1788,7 @@ export class BeatflowScene {
       s.active = false;
       s.ring.visible = false;
       s.flare.visible = false;
+      s.flame.visible = false;
     }
     for (const p of this.lanePulsePool) {
       p.active = false;
@@ -2171,8 +2239,16 @@ export class BeatflowScene {
     if (this.feverActive) {
       return note.lane % 2 === 0 ? _feverColorA : _feverColorB;
     }
-    if (note.kind === 'flick') return this.noteAccentColor;
-    return note.lane % 2 === 0 ? this.notePrimaryColor : this.noteSecondaryColor;
+    const worldTheme = this.envManager?.getCurrentTheme() ?? 'cyberpunk';
+    return resolveNoteColor(
+      note.id,
+      note.lane,
+      note.kind,
+      this.chromaticColA,
+      this.chromaticColB,
+      this.chromaticColAccent,
+      worldTheme,
+    );
   }
 
   private spawnHitShockwave(
@@ -2189,7 +2265,7 @@ export class BeatflowScene {
       if (s.active) continue;
       s.active = true;
       s.life = 0;
-      s.maxLife = 0.34;
+      s.maxLife = 0.38;
       s.expandScale = expandScale;
       s.flarePeak = flarePeak;
       s.ring.position.set(x, 0.068, HIT_LINE_Z);
@@ -2203,6 +2279,13 @@ export class BeatflowScene {
       s.flareMat.color.copy(color);
       s.flareMat.opacity = flarePeak;
       s.flare.visible = true;
+
+      s.flame.position.set(x, 0.24, HIT_LINE_Z - 0.85);
+      s.flame.scale.set(0.95, 0.72, 1);
+      // Warm vibrant amber-gold flame tinted subtly with note color
+      s.flameMat.color.copy(_victoryGoldColor).lerp(color, 0.32);
+      s.flameMat.opacity = this.settings.visualsConfig?.reducedFlash ? 0.28 : 0.74;
+      s.flame.visible = this.getEffectiveQuality() !== 'low';
       return;
     }
   }
@@ -2397,6 +2480,7 @@ export class BeatflowScene {
 
     const dynamicPalette = this.chromaticEngine.update({
       basePalette: this.currentPalette,
+      worldTheme: this.envManager?.getCurrentTheme(),
       section: this.currentSection,
       energy: this.smoothedEnergy,
       beatPulse,
@@ -2407,6 +2491,8 @@ export class BeatflowScene {
       flashIntensity: visualConfig?.flashIntensity ?? 0.65,
       reducedFlash: Boolean(visualConfig?.reducedFlash),
       screenEffects: visualConfig?.screenEffects !== false,
+      feverActive: this.feverActive,
+      brightnessScale: this.getEffectiveBrightness(),
     });
 
     this.chromaticColA.set(dynamicPalette.primary);
@@ -2546,7 +2632,7 @@ export class BeatflowScene {
     this.smoothedHigh = THREE.MathUtils.damp(this.smoothedHigh, audioState.high, 15, dt);
     this.smoothedEnergy = THREE.MathUtils.damp(this.smoothedEnergy, audioState.energy, 12, dt);
 
-    // Real-time bass transient detection
+    // Fast low-latency separated Kick / Snare / Hi-Hat reactive lighting module
     const rawBass = audioState.bass;
     const bassTransient = Math.max(0, rawBass - this.prevRawBass);
     this.prevRawBass = rawBass;
@@ -2555,6 +2641,23 @@ export class BeatflowScene {
     const inSilence =
       this.mode === 'playing' && this.isTimeInProfileSilence(audioState.currentTime);
     const silenceDamp = inSilence ? 0.3 : 1.0;
+
+    this.reactiveLighting.updateSettings({
+      intensity: reactMult,
+      frequency: audioCfg?.frequencySensitivity ?? 1.0,
+      exposure: 0.88 * this.getEffectiveBrightness(),
+      bloomIntensity: this.settings.visualsConfig?.bloomIntensity ?? 0.44,
+    });
+    const reactOut = this.reactiveLighting.step(
+      dt,
+      audioState,
+      this.currentSection,
+      inSilence,
+      reactive,
+    );
+    this.kickPulse = reactOut.kickPulse;
+    this.snarePulse = reactOut.snarePulse;
+    this.hihatPulse = reactOut.hihatPulse;
 
     if (
       this.mode === 'playing' &&
@@ -2683,7 +2786,7 @@ export class BeatflowScene {
 
     this.updateChromaticProgression(dt, this.smoothedBass);
 
-    // Update active dynamic 3D world environment with full 6-band DSP & chromatic modulation
+    // Update active dynamic 3D world environment with full 6-band DSP + separated rhythmic pulses
     this.envManager.update({
       dt,
       elapsed: this.clock.elapsedTime,
@@ -2705,6 +2808,10 @@ export class BeatflowScene {
       brightness: brightScale * sideBrightScale * (this.mode === 'idle' ? menuVisualMult : 1),
       sectionType: this.currentSection,
       beatPulse: this.dropScreenPulse,
+      kickPulse: reactive && !inSilence ? this.kickPulse : 0,
+      snarePulse: reactive && !inSilence ? this.snarePulse : 0,
+      hihatPulse: reactive && !inSilence ? this.hihatPulse : 0,
+      dropFlash: this.dropScreenPulse,
       isMenu: this.isMenuMode,
       menuAmbientEffects: menuCfg?.ambientEffectsEnabled !== false,
       chromaticA: this.chromaticColA,
@@ -2755,7 +2862,11 @@ export class BeatflowScene {
     if (this.sideRailMats[0]) {
       this.sideRailMats[0].emissiveIntensity = Math.min(
         1.15,
-        (0.38 + bassPulse * 0.38) * brightScale * glowScale * sideBrightScale * reducedFlashScale,
+        (0.36 + bassPulse * 0.3 + this.kickPulse * 0.28) *
+          brightScale *
+          glowScale *
+          sideBrightScale *
+          reducedFlashScale,
       );
       if (this.feverActive) this.sideRailMats[0].emissive.copy(_feverColorA);
       else this.sideRailMats[0].emissive.copy(this.chromaticColA);
@@ -2763,7 +2874,11 @@ export class BeatflowScene {
     if (this.sideRailMats[1]) {
       this.sideRailMats[1].emissiveIntensity = Math.min(
         1.15,
-        (0.38 + midPulse * 0.38) * brightScale * glowScale * sideBrightScale * reducedFlashScale,
+        (0.36 + midPulse * 0.3 + this.kickPulse * 0.28) *
+          brightScale *
+          glowScale *
+          sideBrightScale *
+          reducedFlashScale,
       );
       if (this.feverActive) this.sideRailMats[1].emissive.copy(_feverColorB);
       else this.sideRailMats[1].emissive.copy(this.chromaticColB);
@@ -2771,15 +2886,21 @@ export class BeatflowScene {
     if (this.railBracketMats[0]) {
       this.railBracketMats[0].emissive.copy(this.chromaticColA);
       this.railBracketMats[0].emissiveIntensity = Math.min(
-        0.95,
-        (0.24 + lowMidPulse * 0.42) * brightScale * glowScale * reducedFlashScale,
+        1.05,
+        (0.24 + lowMidPulse * 0.32 + this.snarePulse * 0.42) *
+          brightScale *
+          glowScale *
+          reducedFlashScale,
       );
     }
     if (this.railBracketMats[1]) {
       this.railBracketMats[1].emissive.copy(this.chromaticColB);
       this.railBracketMats[1].emissiveIntensity = Math.min(
-        0.95,
-        (0.24 + highMidPulse * 0.42) * brightScale * glowScale * reducedFlashScale,
+        1.05,
+        (0.24 + highMidPulse * 0.32 + this.hihatPulse * 0.38) *
+          brightScale *
+          glowScale *
+          reducedFlashScale,
       );
     }
     this.underDeckConduitMats.forEach((m, idx) => {
@@ -2922,7 +3043,7 @@ export class BeatflowScene {
       w.mat.opacity = w.maxOpacity * Math.sin(frac * Math.PI) * Math.min(1.1, brightScale);
     }
 
-    // Animate pooled expanding hit shockwaves + radial flares
+    // Animate pooled expanding hit shockwaves + radial flares + upward flame hit trails
     for (let i = 0; i < this.shockwavePool.length; i++) {
       const s = this.shockwavePool[i];
       if (!s.active) continue;
@@ -2932,6 +3053,7 @@ export class BeatflowScene {
         s.active = false;
         s.ring.visible = false;
         s.flare.visible = false;
+        s.flame.visible = false;
         continue;
       }
       const inv = 1 - frac;
@@ -2939,6 +3061,13 @@ export class BeatflowScene {
       s.ringMat.opacity = inv * 0.52 * Math.min(1.15, brightScale);
       s.flare.scale.setScalar(0.75 + frac * (s.expandScale * 0.55));
       s.flareMat.opacity = inv * inv * s.flarePeak * Math.min(1.15, brightScale);
+      if (s.flame.visible) {
+        s.flame.position.z = HIT_LINE_Z - 0.8 - frac * 1.45;
+        s.flame.position.y = 0.2 + frac * 0.35;
+        s.flame.scale.set(0.92 + frac * 0.3, 0.72 + frac * 0.65, 1);
+        s.flameMat.opacity =
+          inv * inv * (this.settings.visualsConfig?.reducedFlash ? 0.3 : 0.78) * Math.min(1.1, brightScale);
+      }
     }
 
     // Animate pooled chord linking beams
@@ -3249,6 +3378,16 @@ export class BeatflowScene {
       slot.group.position.set(laneX, floatY, z);
       slot.coreMesh.scale.set(sx, 1, 1);
       slot.trimMesh.scale.set(sx, 1, 1);
+      slot.topRingMesh.scale.set(
+        this.currentShape === 'square' ? sx * 0.88 : sx,
+        this.currentShape === 'square' ? 1.2 : 1,
+        1,
+      );
+      slot.topRingMesh.visible =
+        this.currentShape === 'tile' ||
+        this.currentShape === 'square' ||
+        this.currentShape === 'disc' ||
+        this.currentShape === 'hexagon';
       slot.reflectionMesh.scale.set(sx, 1, 1);
 
       if (this.currentShape === 'diamond' || this.currentShape === 'prism') {
@@ -3266,12 +3405,15 @@ export class BeatflowScene {
       const coreMat = slot.coreMesh.material as THREE.MeshPhysicalMaterial;
       coreMat.color.copy(col);
       coreMat.emissive.copy(col);
-      coreMat.emissiveIntensity = (0.38 + note.intensity * 0.22) * brightScale * glowScale;
+      coreMat.emissiveIntensity = (0.44 + note.intensity * 0.24) * brightScale * glowScale;
 
       const trimMat = slot.trimMesh.material as THREE.MeshStandardMaterial;
-      trimMat.color.copy(col).lerp(_color.setHex(0xffffff), note.challengeSection ? 0.48 : 0.35);
+      trimMat.color.copy(col).lerp(_color.setHex(0xffffff), note.challengeSection ? 0.54 : 0.42);
       trimMat.emissive.copy(note.challengeSection ? _feverColorA : col);
-      trimMat.emissiveIntensity = (0.5 + note.intensity * 0.16) * brightScale * glowScale;
+      trimMat.emissiveIntensity = (0.56 + note.intensity * 0.18) * brightScale * glowScale;
+
+      const topRingMat = slot.topRingMesh.material as THREE.MeshBasicMaterial;
+      topRingMat.opacity = THREE.MathUtils.clamp((0.68 + note.intensity * 0.22) * glowScale, 0.45, 0.92);
 
       const reflMat = slot.reflectionMesh.material as THREE.MeshBasicMaterial;
       slot.reflectionMesh.visible = reflOpacity > 0 && !isHeldActive && !isSlideActive;
@@ -3487,6 +3629,7 @@ export class BeatflowScene {
     });
     this.reflectionGeo.dispose();
     this.trailGeo.dispose();
+    this.topRingGeo.dispose();
     this.holdTailGeo.dispose();
     this.holdCapGeo.dispose();
     this.flickArrowGeo.dispose();
@@ -3510,6 +3653,8 @@ export class BeatflowScene {
     this.roadRoughTex.dispose();
     this.noteReflectionTex.dispose();
     this.pulseGradientTex.dispose();
+    this.tileInnerRingTex.dispose();
+    this.flameTrailTex.dispose();
     this.composer?.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {

@@ -76,7 +76,7 @@ export const RecordsView: React.FC<RecordsViewProps> = ({ onNavigate }) => {
       </header>
 
       <div className="flex-1 overflow-y-auto beatflow-scroll px-4 sm:px-6 py-4">
-        <div className="max-w-3xl mx-auto space-y-5">
+        <div className="max-w-4xl mx-auto space-y-5">
           {/* Summary Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="p-3.5 rounded-2xl bg-slate-950/85 border border-amber-400/30">

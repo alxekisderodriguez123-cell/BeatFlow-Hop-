@@ -84,12 +84,12 @@ export const AUDIOVISUAL_PRESETS: AudiovisualPreset[] = [
   {
     id: 'electronic',
     label: 'Electronic',
-    description: 'Verde láser, azul eléctrico y precisión de club electrónico',
+    description: 'Láseres de club, azul eléctrico y precisión de cabina nocturna',
     palette: { primary: '#22c55e', secondary: '#06b6d4', accent: '#a855f7' },
-    environment: 'cyberpunk',
-    defaultNoteShape: 'prism',
-    bloomScale: 1.1,
-    glowScale: 1.12,
+    environment: 'nightclub',
+    defaultNoteShape: 'diamond',
+    bloomScale: 1.08,
+    glowScale: 1.1,
   },
   {
     id: 'dreamscape',
@@ -132,11 +132,19 @@ export function resolveNoteShape(
     case 'ocean':
       return 'disc';
     case 'tropical':
-      return 'diamond';
+      return 'tile';
     case 'mountain':
       return 'prism';
     case 'newyork':
       return 'square';
+    case 'nightclub':
+      return 'diamond';
+    case 'synthwave':
+      return 'tile';
+    case 'reactor':
+      return 'hexagon';
+    case 'digital':
+      return 'prism';
     case 'cyberpunk':
     default:
       return 'tile';

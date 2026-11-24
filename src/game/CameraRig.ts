@@ -33,6 +33,7 @@ export class CameraRig {
   private baseCamY = 3.15;
   private baseCamZ = 6.25;
   private baseFov = 62;
+  private baseLookY = 0.55;
   private readonly hitLineZ: number;
   private lastAspect = 1;
   private lastTrackWidth = 6.35;
@@ -82,6 +83,7 @@ export class CameraRig {
       const extraLaneFactor = Math.max(0, (this.lastTrackWidth - 6.35) * 0.42);
       this.baseCamZ = THREE.MathUtils.lerp(6.25, 9.5, t) + extraLaneFactor;
       this.baseCamY = THREE.MathUtils.lerp(3.15, 4.45, t) + extraLaneFactor * 0.45;
+      this.baseLookY = THREE.MathUtils.lerp(0.68, 0.55, t);
       const distToHit = this.baseCamZ - this.hitLineZ;
       const neededTanHalfV = halfWidthNeeded / (distToHit * Math.max(0.4, this.lastAspect));
       this.baseFov = THREE.MathUtils.clamp(
@@ -90,15 +92,18 @@ export class CameraRig {
         96,
       );
     } else {
+      const wideT = THREE.MathUtils.clamp((this.lastAspect - 1.1) / 1.1, 0, 1);
       const extra = Math.max(0, (this.lastTrackWidth - 6.35) * 0.35);
-      this.baseCamZ = 6.25 + extra;
-      this.baseCamY = 3.15 + extra * 0.35;
-      this.baseFov = THREE.MathUtils.clamp(62 + extra * 2.5, 62, 76);
+      this.baseCamZ = 6.25 + extra + wideT * 0.25;
+      this.baseCamY = 3.15 + extra * 0.35 + wideT * 0.22;
+      this.baseLookY = THREE.MathUtils.lerp(0.68, 0.98, wideT);
+      this.baseFov = THREE.MathUtils.clamp(62 + extra * 2.4 - wideT * 3.5, 56, 74);
     }
 
+    this.curLookY = this.baseLookY;
     this.camera.fov = this.baseFov;
     this.camera.position.set(0, this.baseCamY, this.baseCamZ);
-    this.camera.lookAt(0, 0.55, -26);
+    this.camera.lookAt(0, this.baseLookY, -26);
     this.camera.rotation.z = 0;
     this.camera.updateProjectionMatrix();
   }
@@ -180,7 +185,7 @@ export class CameraRig {
       this.curOffsetY = THREE.MathUtils.damp(this.curOffsetY, 0, 18, dt);
       this.curOffsetZ = THREE.MathUtils.damp(this.curOffsetZ, 0, 18, dt);
       this.curLookX = THREE.MathUtils.damp(this.curLookX, 0, 18, dt);
-      this.curLookY = THREE.MathUtils.damp(this.curLookY, 0.55, 18, dt);
+      this.curLookY = THREE.MathUtils.damp(this.curLookY, this.baseLookY, 18, dt);
       this.curRoll = THREE.MathUtils.damp(this.curRoll, 0, 18, dt);
       this.curShakeX = 0;
       this.curShakeY = 0;
@@ -354,7 +359,7 @@ export class CameraRig {
     // Subtle LookAt counterweight keeps hit-line grounded while shifting perspective naturally
     const targetLookX = targetOffsetX * 0.35;
     const targetLookY =
-      0.55 + targetOffsetY * 0.22 - this.preDropTension * 0.08 + introArcY * 0.45;
+      this.baseLookY + targetOffsetY * 0.22 - this.preDropTension * 0.08 + introArcY * 0.45;
 
     // 5. Camera Tilt (perceptible musical roll with automatic recovery to 0)
     const tiltEnabled = cfg?.tilt ? cfg.tilt.enabled : true;

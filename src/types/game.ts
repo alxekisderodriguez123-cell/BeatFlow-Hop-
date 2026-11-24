@@ -31,7 +31,11 @@ export type EnvironmentTheme =
   | 'ocean'
   | 'mountain'
   | 'newyork'
-  | 'cosmic';
+  | 'cosmic'
+  | 'nightclub'
+  | 'synthwave'
+  | 'reactor'
+  | 'digital';
 
 export type EnvironmentPreference = 'auto' | 'random' | EnvironmentTheme;
 
@@ -46,7 +50,7 @@ export type AudiovisualPresetId =
   | 'dreamscape'
   | 'minimal_neon';
 
-export type ScreenRoute = 'menu' | 'music' | 'records' | 'settings' | 'playing';
+export type ScreenRoute = 'menu' | 'music' | 'records' | 'settings' | 'playing' | 'creator' | 'community';
 
 export interface MechanicFrequencyConfig {
   enabled: boolean;
@@ -181,6 +185,8 @@ export interface GenerationConfig {
   randomness: number;
   /** Musical layer priority focus */
   musicalFocus?: MusicalFocus;
+  /** Optional Two-Thumb ergonomic pattern mode (<=2 simultaneous notes, balanced left/right thumbs) */
+  twoThumbMode?: boolean;
   /** Seed string for deterministic level reproduction */
   seed: string;
   mechanics: MechanicsConfig;

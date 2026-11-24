@@ -204,6 +204,99 @@ export function createCyberBillboardTexture(
   return tex;
 }
 
+/**
+ * Crisp concentric beveled glowing ring overlay matching stylized rhythm tiles in references.
+ */
+export function createTileInnerRingTexture(): THREE.CanvasTexture {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  const drawRoundedRect = (pad: number, radius: number) => {
+    const x = pad;
+    const y = pad;
+    const w = size - pad * 2;
+    const h = size - pad * 2;
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  };
+
+  // Outer crisp white bevel highlight rim
+  drawRoundedRect(7, 22);
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.lineWidth = 6;
+  ctx.stroke();
+
+  // Inner concentric bright glowing ring/oval
+  ctx.strokeStyle = 'rgba(255,255,255,0.88)';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.ellipse(size * 0.5, size * 0.5, size * 0.25, size * 0.23, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Soft center sheen
+  const sheen = ctx.createRadialGradient(size * 0.5, size * 0.44, 2, size * 0.5, size * 0.5, size * 0.34);
+  sheen.addColorStop(0, 'rgba(255,255,255,0.38)');
+  sheen.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(0, 0, size, size);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * Stylized upward flame/energy plume texture for rhythmic hit impacts.
+ */
+export function createFlameTrailTexture(): THREE.CanvasTexture {
+  const w = 128;
+  const h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  // Soft outer glow plume
+  const glow = ctx.createRadialGradient(w * 0.5, h * 0.72, 6, w * 0.5, h * 0.58, 96);
+  glow.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+  glow.addColorStop(0.32, 'rgba(255, 220, 110, 0.65)');
+  glow.addColorStop(0.7, 'rgba(255, 115, 40, 0.22)');
+  glow.addColorStop(1, 'rgba(255, 80, 20, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+
+  // Stylized flame silhouette tongues
+  ctx.beginPath();
+  ctx.moveTo(w * 0.5, h * 0.94);
+  ctx.bezierCurveTo(w * 0.14, h * 0.82, w * 0.18, h * 0.45, w * 0.42, h * 0.12);
+  ctx.quadraticCurveTo(w * 0.5, h * 0.28, w * 0.6, h * 0.06);
+  ctx.bezierCurveTo(w * 0.84, h * 0.4, w * 0.86, h * 0.8, w * 0.5, h * 0.94);
+  ctx.closePath();
+
+  const flameGrad = ctx.createLinearGradient(0, h * 0.94, 0, h * 0.06);
+  flameGrad.addColorStop(0, 'rgba(255, 255, 255, 0.98)');
+  flameGrad.addColorStop(0.45, 'rgba(255, 215, 95, 0.9)');
+  flameGrad.addColorStop(1, 'rgba(255, 95, 45, 0)');
+  ctx.fillStyle = flameGrad;
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 export function disposeObjectTree(root: THREE.Object3D): void {
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();

@@ -166,6 +166,11 @@ export function generateProceduralLevel(
   const mech = config.mechanics;
   const maxMisses = Math.max(1, config.maxMisses || 3);
   const musicalFocus: MusicalFocus = config.musicalFocus ?? 'balanced';
+  const twoThumbMode = Boolean(config.twoThumbMode);
+  const leftZoneMax = Math.floor(laneCount / 2) - 1;
+  const rightZoneMin = Math.ceil(laneCount / 2);
+  const isLeftThumb = (l: number) => l <= leftZoneMax;
+  const isRightThumb = (l: number) => l >= rightZoneMin;
 
   // Base speed in 3D world units/sec (spawn at z = -48, hit line at z = 1.6)
   const baseSpeed = 16.5;
@@ -415,12 +420,19 @@ export function generateProceduralLevel(
         rng() < 0.15 * mech.trills.frequency * (0.5 + complexity * 0.7)
       ) {
         trillRemaining = 4 + Math.floor(rng() * 3);
+        const oppositeAnchor = twoThumbMode
+          ? isLeftThumb(currentLane)
+            ? rightZoneMin
+            : leftZoneMax
+          : -1;
         const alt =
-          currentLane + 1 < laneCount && isLaneFreeAt(currentLane + 1, ev.time)
-            ? currentLane + 1
-            : currentLane - 1 >= 0
-              ? currentLane - 1
-              : (currentLane + 2) % laneCount;
+          twoThumbMode && oppositeAnchor >= 0 && isLaneFreeAt(oppositeAnchor, ev.time)
+            ? oppositeAnchor
+            : currentLane + 1 < laneCount && isLaneFreeAt(currentLane + 1, ev.time)
+              ? currentLane + 1
+              : currentLane - 1 >= 0
+                ? currentLane - 1
+                : (currentLane + 2) % laneCount;
         trillLanes = [currentLane, alt];
         trillFlip = 0;
       } else if (
@@ -589,6 +601,29 @@ export function generateProceduralLevel(
       lastPitchClass = ev.pitchClass;
     }
 
+    if (twoThumbMode && dtFromPrev < 0.24) {
+      // Avoid uncomfortable wide same-thumb jumps during rapid passages
+      const sameSideLeft = isLeftThumb(currentLane) && isLeftThumb(nextLane);
+      const sameSideRight = isRightThumb(currentLane) && isRightThumb(nextLane);
+      if ((sameSideLeft || sameSideRight) && Math.abs(nextLane - currentLane) >= 2) {
+        const oppStart = isLeftThumb(currentLane) ? rightZoneMin : 0;
+        const oppEnd = isLeftThumb(currentLane) ? laneCount - 1 : leftZoneMax;
+        let switched = -1;
+        for (let l = oppStart; l <= oppEnd; l++) {
+          if (isLaneFreeAt(l, ev.time)) {
+            switched = l;
+            break;
+          }
+        }
+        if (switched >= 0) {
+          nextLane = switched;
+        } else {
+          const stepCloser = currentLane + Math.sign(nextLane - currentLane);
+          if (isLaneFreeAt(stepCloser, ev.time)) nextLane = stepCloser;
+        }
+      }
+    }
+
     if (!isLaneFreeAt(nextLane, ev.time)) {
       let foundAlt = -1;
       for (let offset = 1; offset < laneCount; offset++) {
@@ -635,8 +670,13 @@ export function generateProceduralLevel(
           mech.slideNotes.frequency *
           (pitchMoveSlideHint ? 1.75 : isMelodicOrVocal ? 1.3 : 0.85)
     ) {
+      const maxSlideSpan = twoThumbMode
+        ? Math.max(1, Math.floor(laneCount / 2) - 1)
+        : laneCount >= 6
+          ? 3
+          : 2;
       const span = Math.min(
-        laneCount >= 6 ? 3 : 2,
+        maxSlideSpan,
         Math.max(1, 1 + Math.floor(rng() * (complexity > 0.55 ? 2.4 : 1.4))),
       );
       const contourDir =
@@ -653,7 +693,15 @@ export function generateProceduralLevel(
                 : chosenLane < laneCount - 1
                   ? 1
                   : -1;
-      const actualEnd = Math.max(0, Math.min(laneCount - 1, chosenLane + dir * span));
+      let actualEnd = Math.max(0, Math.min(laneCount - 1, chosenLane + dir * span));
+      if (twoThumbMode) {
+        // Keep slide strictly inside ergonomic single-thumb reach (never force a full crossover)
+        if (isLeftThumb(chosenLane) && actualEnd > Math.floor(laneCount / 2)) {
+          actualEnd = Math.max(0, leftZoneMax);
+        } else if (isRightThumb(chosenLane) && actualEnd < Math.floor((laneCount - 1) / 2)) {
+          actualEnd = Math.min(laneCount - 1, rightZoneMin);
+        }
+      }
       if (actualEnd !== chosenLane) {
         const targetSlideDur = ev.duration
           ? THREEClamp(ev.duration * 0.85, 0.4, 1.05)
@@ -800,8 +848,9 @@ export function generateProceduralLevel(
       dtFromPrev > minGlobalGap * 1.25 &&
       rng() < chordRoll;
 
-    const physicalMax =
-      laneCount <= 4
+    const physicalMax = twoThumbMode
+      ? 2
+      : laneCount <= 4
         ? 2
         : Math.min(mech.doubleNotes.maxSimultaneous, laneCount >= 6 ? 4 : 3);
     let targetChordSize = 1;
@@ -841,7 +890,13 @@ export function generateProceduralLevel(
       const half = Math.floor(laneCount / 2);
       const candidateOrder: number[] = [];
       for (let l = 0; l < laneCount; l++) {
-        if (l !== chosenLane) candidateOrder.push(l);
+        if (l === chosenLane) continue;
+        if (twoThumbMode) {
+          // Ensure chord partner is playable with the opposite thumb
+          if (isLeftThumb(chosenLane) && !isRightThumb(l)) continue;
+          if (isRightThumb(chosenLane) && !isLeftThumb(l)) continue;
+        }
+        candidateOrder.push(l);
       }
       candidateOrder.sort((a, b) => {
         const aOpp = (chosenLane < half) !== (a < half) ? 0 : 1;
@@ -881,6 +936,9 @@ export function generateProceduralLevel(
   rawNotes.sort((a, b) => a.time - b.time || a.lane - b.lane);
   const lastTimePerLane = new Array<number>(laneCount).fill(-10);
   const busyUntilPerLane = new Array<number>(laneCount).fill(-10);
+  let leftThumbBusyUntil = -10;
+  let rightThumbBusyUntil = -10;
+  const maxSimultaneousAllowed = twoThumbMode ? 2 : Math.min(4, laneCount);
 
   for (const n of rawNotes) {
     if (n.lane < 0 || n.lane >= laneCount) continue;
@@ -888,16 +946,36 @@ export function generateProceduralLevel(
     if (n.time - lastTimePerLane[n.lane] < 0.095) continue;
     if (n.time < busyUntilPerLane[n.lane]) continue;
 
-    const sameTimestampCount = validatedNotes.filter((v) => Math.abs(v.time - n.time) < 0.04).length;
-    if (sameTimestampCount >= Math.min(4, laneCount)) continue;
+    if (twoThumbMode) {
+      if (isLeftThumb(n.lane) && n.time < leftThumbBusyUntil) continue;
+      if (isRightThumb(n.lane) && n.time < rightThumbBusyUntil) continue;
+    }
+
+    const simultaneous = validatedNotes.filter((v) => Math.abs(v.time - n.time) < 0.04);
+    if (simultaneous.length >= maxSimultaneousAllowed) continue;
+
+    if (twoThumbMode && simultaneous.length === 1) {
+      const existing = simultaneous[0];
+      const bothLeft = isLeftThumb(existing.lane) && isLeftThumb(n.lane);
+      const bothRight = isRightThumb(existing.lane) && isRightThumb(n.lane);
+      if (bothLeft || bothRight || existing.lane === n.lane) continue;
+    }
 
     const endDur = n.durationSec ?? 0;
     lastTimePerLane[n.lane] = n.time + endDur;
     busyUntilPerLane[n.lane] = n.time + endDur + (endDur > 0 ? 0.1 : 0);
+    if (twoThumbMode && endDur > 0) {
+      if (isLeftThumb(n.lane)) leftThumbBusyUntil = Math.max(leftThumbBusyUntil, n.time + endDur + 0.06);
+      else if (isRightThumb(n.lane)) rightThumbBusyUntil = Math.max(rightThumbBusyUntil, n.time + endDur + 0.06);
+    }
     if (n.kind === 'slide' && n.slidePath) {
       for (const wp of n.slidePath) {
         lastTimePerLane[wp.lane] = Math.max(lastTimePerLane[wp.lane], n.time + endDur);
         busyUntilPerLane[wp.lane] = Math.max(busyUntilPerLane[wp.lane], n.time + endDur + 0.1);
+        if (twoThumbMode && endDur > 0) {
+          if (isLeftThumb(wp.lane)) leftThumbBusyUntil = Math.max(leftThumbBusyUntil, n.time + endDur + 0.06);
+          else if (isRightThumb(wp.lane)) rightThumbBusyUntil = Math.max(rightThumbBusyUntil, n.time + endDur + 0.06);
+        }
       }
     }
     validatedNotes.push(n);

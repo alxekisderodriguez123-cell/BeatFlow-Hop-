@@ -158,6 +158,7 @@ export function getPresetGenerationConfig(
         hitWindowMs: 175,
         randomness: 0.28,
         musicalFocus: 'balanced',
+        twoThumbMode: false,
         seed: s,
         mechanics,
       };
@@ -173,6 +174,7 @@ export function getPresetGenerationConfig(
         hitWindowMs: 145,
         randomness: 0.46,
         musicalFocus: 'balanced',
+        twoThumbMode: false,
         seed: s,
         mechanics,
       };
@@ -188,6 +190,7 @@ export function getPresetGenerationConfig(
         hitWindowMs: 120,
         randomness: 0.6,
         musicalFocus: 'balanced',
+        twoThumbMode: false,
         seed: s,
         mechanics,
       };
@@ -203,6 +206,7 @@ export function getPresetGenerationConfig(
         hitWindowMs: 105,
         randomness: 0.7,
         musicalFocus: 'balanced',
+        twoThumbMode: false,
         seed: s,
         mechanics,
       };
@@ -218,6 +222,7 @@ export function getPresetGenerationConfig(
         hitWindowMs: 92,
         randomness: 0.78,
         musicalFocus: 'balanced',
+        twoThumbMode: false,
         seed: s,
         mechanics,
       };
@@ -234,6 +239,7 @@ export function getPresetGenerationConfig(
         hitWindowMs: 135,
         randomness: 0.55,
         musicalFocus: 'balanced',
+        twoThumbMode: false,
         seed: s,
         mechanics,
       };
@@ -390,6 +396,7 @@ export function loadSettings(): GameSettings {
           ? Number(parsedGen?.laneCount)
           : 4) as LaneCount,
         maxMisses: parsedGen?.maxMisses ?? 3,
+        twoThumbMode: Boolean(parsedGen?.twoThumbMode),
         mechanics: mergeMechanics(baseGen.mechanics, parsedGen?.mechanics),
       },
       cameraConfig: {
@@ -456,6 +463,7 @@ export function saveSettings(settings: GameSettings): void {
 
 export function buildModifierLabel(cfg: GenerationConfig): string {
   const tags: string[] = [];
+  if (cfg.twoThumbMode) tags.push('2 Pulgares');
   if (cfg.maxMisses >= 999) tags.push('Sin derrota');
   else if (cfg.maxMisses !== 3) tags.push(`${cfg.maxMisses} fallos`);
   if (!cfg.mechanics.holdNotes.enabled) tags.push('Sin Hold');
@@ -469,6 +477,7 @@ export function buildModifierLabel(cfg: GenerationConfig): string {
 export function buildVariantKey(cfg: GenerationConfig): string {
   const m = cfg.mechanics;
   const modSig = [
+    cfg.twoThumbMode ? 't2' : 't0',
     cfg.maxMisses >= 999 ? 'nf' : `m${cfg.maxMisses}`,
     m.holdNotes.enabled ? 'h1' : 'h0',
     m.doubleNotes.enabled ? `d${m.doubleNotes.maxSimultaneous}` : 'd0',
