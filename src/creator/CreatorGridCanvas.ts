@@ -74,9 +74,13 @@ export class CreatorGridCanvas {
 
   private rafId = 0;
   private dirty = true;
+  private active = true;
   private disposed = false;
   private cssWidth = 360;
   private cssHeight = 520;
+  private cachedMaxObjEndSec = 0;
+  private visibleTriggerCache: CreatorObject[] = [];
+  private visibleCasillaCache: CreatorObject[] = [];
   private resizeObserver: ResizeObserver;
 
   constructor(
@@ -85,13 +89,14 @@ export class CreatorGridCanvas {
     callbacks: CreatorGridCallbacks,
   ) {
     this.canvas = canvas;
-    const context = canvas.getContext('2d');
+    const context = canvas.getContext('2d', { alpha: false });
     if (!context) {
       throw new Error('No se pudo inicializar el contexto 2D de la cuadrícula.');
     }
     this.ctx = context;
     this.level = initialLevel;
     this.callbacks = callbacks;
+    this.recomputeMaxObjEnd();
 
     this.resizeObserver = new ResizeObserver(() => this.handleResize());
     if (canvas.parentElement) {
@@ -99,27 +104,78 @@ export class CreatorGridCanvas {
     }
     this.handleResize();
     this.bindEvents();
-    this.startRenderLoop();
+    this.scheduleRender();
+  }
+
+  private recomputeMaxObjEnd(): void {
+    let maxObj = 0;
+    const objs = this.level.objects;
+    for (let i = 0; i < objs.length; i++) {
+      const o = objs[i];
+      const end = o.timeSec + (o.noteData?.durationSec ?? 0);
+      if (end > maxObj) maxObj = end;
+    }
+    this.cachedMaxObjEndSec = maxObj;
+  }
+
+  private scheduleRender(): void {
+    this.dirty = true;
+    if (this.disposed || !this.active || this.rafId !== 0) return;
+    this.rafId = requestAnimationFrame(this.onAnimationFrame);
+  }
+
+  private onAnimationFrame = (): void => {
+    this.rafId = 0;
+    if (this.disposed || !this.active) return;
+    if (this.dirty) {
+      this.dirty = false;
+      this.render();
+    }
+    if (this.dirty) {
+      this.rafId = requestAnimationFrame(this.onAnimationFrame);
+    }
+  };
+
+  public setActive(active: boolean): void {
+    if (this.active === active) return;
+    this.active = active;
+    if (!active) {
+      if (this.rafId !== 0) {
+        cancelAnimationFrame(this.rafId);
+        this.rafId = 0;
+      }
+    } else {
+      this.scheduleRender();
+    }
   }
 
   public setState(params: {
     level: BeatflowLevelDocument;
-    selectedIds: string[];
-    mainTab: CreatorMainTab;
-    editTool: string;
-    snapDivision: BeatSnapDivision;
-    hasActiveBuildItem: boolean;
+    selectedIds?: string[];
+    mainTab?: CreatorMainTab;
+    editTool?: string;
+    snapDivision?: BeatSnapDivision;
+    hasActiveBuildItem?: boolean;
   }): void {
+    const levelChanged = this.level !== params.level;
     this.level = params.level;
-    this.selectedIds = new Set(params.selectedIds);
-    this.mainTab = params.mainTab;
-    this.editTool = params.editTool;
-    this.snapDivision = params.snapDivision;
-    this.hasActiveBuildItem = params.hasActiveBuildItem;
-    this.dirty = true;
+    if (levelChanged) {
+      this.recomputeMaxObjEnd();
+    }
+    if (params.selectedIds !== undefined) {
+      this.selectedIds = new Set(params.selectedIds);
+    }
+    if (params.mainTab !== undefined) this.mainTab = params.mainTab;
+    if (params.editTool !== undefined) this.editTool = params.editTool;
+    if (params.snapDivision !== undefined) this.snapDivision = params.snapDivision;
+    if (params.hasActiveBuildItem !== undefined) {
+      this.hasActiveBuildItem = params.hasActiveBuildItem;
+    }
+    this.scheduleRender();
   }
 
   public setPlaybackTime(timeSec: number | null, followPlayhead = false): void {
+    if (this.playbackTimeSec === timeSec) return;
     this.playbackTimeSec = timeSec;
     if (timeSec !== null) {
       this.cursorTimeSec = timeSec;
@@ -129,7 +185,7 @@ export class CreatorGridCanvas {
         this.setScrollTime(target);
       }
     }
-    this.dirty = true;
+    this.scheduleRender();
   }
 
   public getCursorTimeSec(): number {
@@ -143,7 +199,7 @@ export class CreatorGridCanvas {
       this.scrollTimeSec = clamped;
       this.cursorTimeSec = clamped;
       this.callbacks.onScrollChange(this.scrollTimeSec);
-      this.dirty = true;
+      this.scheduleRender();
     }
   }
 
@@ -153,8 +209,10 @@ export class CreatorGridCanvas {
   }
 
   public setZoomPixelsPerSec(pps: number): void {
-    this.pixelsPerSec = Math.max(70, Math.min(340, pps));
-    this.dirty = true;
+    const next = Math.max(70, Math.min(340, pps));
+    if (Math.abs(next - this.pixelsPerSec) < 0.1) return;
+    this.pixelsPerSec = next;
+    this.scheduleRender();
   }
 
   public getViewportMetrics(): GridViewportMetrics {
@@ -167,11 +225,7 @@ export class CreatorGridCanvas {
   }
 
   private getTotalDurationSec(): number {
-    const maxObj = this.level.objects.reduce(
-      (max, o) => Math.max(max, o.timeSec + (o.noteData?.durationSec ?? 0)),
-      0,
-    );
-    return Math.max(16, this.level.audio.durationSec, maxObj + 6);
+    return Math.max(16, this.level.audio.durationSec, this.cachedMaxObjEndSec + 6);
   }
 
   private getVisibleDurationSec(): number {
@@ -182,7 +236,12 @@ export class CreatorGridCanvas {
     const parent = this.canvas.parentElement;
     const w = Math.max(220, parent ? parent.clientWidth : window.innerWidth);
     const h = Math.max(200, parent ? parent.clientHeight : 420);
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const isCoarse =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(pointer: coarse)').matches;
+    const maxDpr = isCoarse ? 1.5 : 2;
+    const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
     this.cssWidth = w;
     this.cssHeight = h;
     this.canvas.width = Math.round(w * dpr);
@@ -190,7 +249,7 @@ export class CreatorGridCanvas {
     this.canvas.style.width = `${w}px`;
     this.canvas.style.height = `${h}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.dirty = true;
+    this.scheduleRender();
   }
 
   private getLaneGeometry(): { laneCount: number; trackLeft: number; trackWidth: number; laneWidth: number } {
@@ -299,11 +358,14 @@ export class CreatorGridCanvas {
 
     const { x, y } = this.getCanvasCoords(e.clientX, e.clientY);
 
-    // Handle 2-finger pinch zoom
+    // Handle 2-finger pinch zoom without intermediate array allocation
     if (this.activePointers.size === 1) {
-      const other = Array.from(this.activePointers.values())[0];
-      this.pinchStartDist = Math.hypot(x - other.startX, y - other.startY);
-      this.pinchStartPps = this.pixelsPerSec;
+      const first = this.activePointers.values().next();
+      if (!first.done) {
+        const other = first.value;
+        this.pinchStartDist = Math.hypot(x - other.startX, y - other.startY);
+        this.pinchStartPps = this.pixelsPerSec;
+      }
     }
 
     const hit = this.hitTestObject(x, y);
@@ -353,7 +415,9 @@ export class CreatorGridCanvas {
       boxCurrentX: x,
       boxCurrentY: y,
     });
-    this.dirty = true;
+    if (initialMode === 'box_select') {
+      this.scheduleRender();
+    }
   };
 
   private onPointerMove = (e: PointerEvent): void => {
@@ -363,17 +427,20 @@ export class CreatorGridCanvas {
 
     // Pinch zoom when 2 pointers active
     if (this.activePointers.size >= 2 && this.pinchStartDist) {
-      const pts = Array.from(this.activePointers.values());
-      if (pts.length >= 2) {
-        const other = pts.find((p) => p.pointerId !== e.pointerId);
-        if (other) {
-          const dist = Math.hypot(x - other.boxCurrentX, y - other.boxCurrentY);
-          const ratio = dist / Math.max(20, this.pinchStartDist);
-          this.setZoomPixelsPerSec(this.pinchStartPps * ratio);
-          sess.boxCurrentX = x;
-          sess.boxCurrentY = y;
-          return;
+      let other: PointerSession | null = null;
+      for (const p of this.activePointers.values()) {
+        if (p.pointerId !== e.pointerId) {
+          other = p;
+          break;
         }
+      }
+      if (other) {
+        const dist = Math.hypot(x - other.boxCurrentX, y - other.boxCurrentY);
+        const ratio = dist / Math.max(20, this.pinchStartDist);
+        this.setZoomPixelsPerSec(this.pinchStartPps * ratio);
+        sess.boxCurrentX = x;
+        sess.boxCurrentY = y;
+        return;
       }
     }
 
@@ -397,6 +464,7 @@ export class CreatorGridCanvas {
       }
     }
 
+    let needsVisualUpdate = false;
     if (sess.mode === 'pan') {
       // Natural vertical touch scroll: dragging finger down pulls higher times down into view (increases scrollTime)
       const totalDy = y - sess.startY;
@@ -415,15 +483,21 @@ export class CreatorGridCanvas {
         sess.lastAppliedDeltaLane = rawDeltaLane;
         sess.lastAppliedDeltaTime = rawDeltaTime;
         this.callbacks.onDragMoveSelected(incLane, incTime);
+        needsVisualUpdate = true;
       }
     } else if (sess.mode === 'drag_resize' && sess.hitObjId && sess.movedBeyondThreshold) {
       const deltaTime = (sess.startY - y) / this.pixelsPerSec;
       const nextDur = Math.max(0.15, sess.resizeStartDuration + deltaTime);
       this.callbacks.onDragResizeLong(sess.hitObjId, nextDur);
+      needsVisualUpdate = true;
+    } else if (sess.mode === 'box_select' && sess.movedBeyondThreshold) {
+      needsVisualUpdate = true;
     }
 
     sess.lastY = y;
-    this.dirty = true;
+    if (needsVisualUpdate) {
+      this.scheduleRender();
+    }
   };
 
   private onPointerUp = (e: PointerEvent): void => {
@@ -443,7 +517,7 @@ export class CreatorGridCanvas {
           Math.abs(sess.lastAppliedDeltaTime) > 0.001 ||
           sess.mode === 'drag_resize');
       this.callbacks.onDragEnd(changed);
-      this.dirty = true;
+      this.scheduleRender();
       return;
     }
 
@@ -465,7 +539,7 @@ export class CreatorGridCanvas {
         }
       }
       this.callbacks.onSelectMany(hitIds, true);
-      this.dirty = true;
+      this.scheduleRender();
       return;
     }
 
@@ -489,7 +563,7 @@ export class CreatorGridCanvas {
       }
     }
 
-    this.dirty = true;
+    this.scheduleRender();
   };
 
   private onWheel = (e: WheelEvent): void => {
@@ -503,20 +577,8 @@ export class CreatorGridCanvas {
     this.setScrollTime(this.scrollTimeSec + deltaSec);
   };
 
-  private startRenderLoop(): void {
-    const frame = () => {
-      if (this.disposed) return;
-      if (this.dirty) {
-        this.dirty = false;
-        this.render();
-      }
-      this.rafId = requestAnimationFrame(frame);
-    };
-    this.rafId = requestAnimationFrame(frame);
-  }
-
   public forceRender(): void {
-    this.dirty = true;
+    this.scheduleRender();
   }
 
   private render(): void {
@@ -626,12 +688,29 @@ export class CreatorGridCanvas {
       }
     }
 
-    // 3. Green Horizontal Trigger Activation Lines (PDF 1 & PDF 2 requirement)
-    if (view.triggerLines) {
-      for (const obj of this.level.objects) {
-        if (obj.hidden || !isTriggerLineObject(obj)) continue;
-        if (obj.timeSec < minVisTime - 1 || obj.timeSec > maxVisTime + 1) continue;
+    // Single-pass viewport culling into reusable arrays
+    this.visibleTriggerCache.length = 0;
+    this.visibleCasillaCache.length = 0;
+    const allObjects = this.level.objects;
+    for (let i = 0; i < allObjects.length; i++) {
+      const obj = allObjects[i];
+      if (obj.hidden) continue;
+      if (isTriggerLineObject(obj)) {
+        if (view.triggerLines && obj.timeSec >= minVisTime - 1 && obj.timeSec <= maxVisTime + 1) {
+          this.visibleTriggerCache.push(obj);
+        }
+      } else if (view.casillas) {
+        const dur = obj.noteData?.durationSec ?? 0;
+        if (obj.timeSec + dur >= minVisTime && obj.timeSec <= maxVisTime) {
+          this.visibleCasillaCache.push(obj);
+        }
+      }
+    }
 
+    // 3. Green Horizontal Trigger Activation Lines (PDF 1 & PDF 2 requirement)
+    if (view.triggerLines && this.visibleTriggerCache.length > 0) {
+      for (let i = 0; i < this.visibleTriggerCache.length; i++) {
+        const obj = this.visibleTriggerCache[i];
         const trigType = obj.trigger?.type;
         if ((trigType === 'camera_fx' || trigType === 'camera' || trigType === 'screen_fx') && !view.cameraFx) {
           continue;
@@ -689,11 +768,10 @@ export class CreatorGridCanvas {
     }
 
     // 4. Casillas (and legacy objects if present from v1/v2 migration)
-    if (view.casillas) {
-      for (const obj of this.level.objects) {
-        if (obj.hidden || isTriggerLineObject(obj)) continue;
+    if (view.casillas && this.visibleCasillaCache.length > 0) {
+      for (let i = 0; i < this.visibleCasillaCache.length; i++) {
+        const obj = this.visibleCasillaCache[i];
         const dur = obj.noteData?.durationSec ?? 0;
-        if (obj.timeSec + dur < minVisTime || obj.timeSec > maxVisTime) continue;
 
         const lane = obj.lane >= 0 ? Math.min(laneCount - 1, obj.lane) : 0;
         const cx = trackLeft + (lane + 0.5) * laneWidth;
@@ -706,16 +784,15 @@ export class CreatorGridCanvas {
 
         // Subtle particle/glow halo if View.particles is active
         if (view.particles) {
-          ctx.save();
           ctx.fillStyle = primary;
           ctx.globalAlpha = isSelected ? 0.22 : 0.1;
           ctx.beginPath();
           ctx.arc(cx, baseY, Math.min(laneWidth * 0.48, 28), 0, Math.PI * 2);
           ctx.fill();
-          ctx.restore();
+          ctx.globalAlpha = 1;
         }
 
-        // Long tile / hold / slide body
+        // Long tile / hold / slide body (layered flat fill avoids per-frame LinearGradient allocations)
         const isLong =
           obj.type === 'note_hold' ||
           obj.type === 'note_slide' ||
@@ -727,21 +804,22 @@ export class CreatorGridCanvas {
           const bodyW = Math.min(laneWidth * 0.62, 40);
           const bodyH = Math.max(18, baseY - topY);
 
-          const grad = ctx.createLinearGradient(cx, baseY, cx, topY);
-          grad.addColorStop(0, primary);
-          grad.addColorStop(1, useCombo ? secondary : primary);
-
-          ctx.save();
           ctx.globalAlpha = 0.34;
-          ctx.fillStyle = grad;
+          ctx.fillStyle = primary;
           this.roundRectPath(ctx, cx - bodyW / 2, topY, bodyW, bodyH, 8);
           ctx.fill();
+          if (useCombo) {
+            ctx.globalAlpha = 0.22;
+            ctx.fillStyle = secondary;
+            this.roundRectPath(ctx, cx - bodyW / 2, topY, bodyW, bodyH * 0.45, 8);
+            ctx.fill();
+          }
           ctx.globalAlpha = 0.92;
           ctx.strokeStyle = isSelected ? '#ffffff' : primary;
           ctx.lineWidth = isSelected ? 2 : 1.3;
           this.roundRectPath(ctx, cx - bodyW / 2, topY, bodyW, bodyH, 8);
           ctx.stroke();
-          ctx.restore();
+          ctx.globalAlpha = 1;
 
           // Slide lane target indicator
           if (

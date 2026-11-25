@@ -503,6 +503,16 @@ export class BeatflowScene {
   private autoPerfLevel: QualityLevel = 'high';
   private perfFrameSamples = 0;
   private perfFrameAccum = 0;
+  private lastPerfScaleChangeMs = 0;
+  private isMobileGpu = false;
+  private suspended = false;
+  private isDocumentHidden = false;
+  private renderContext: 'menu' | 'gameplay' | 'playtest' | 'paused' = 'menu';
+  private loopRunning = false;
+  private lastRenderTimeMs = 0;
+  private accumulatedMenuDt = 0;
+  private pauseRenderDone = false;
+  private hasActiveParticles = false;
 
   // Note pooling
   private currentShape: ConcreteNoteShape = 'tile';
@@ -636,12 +646,22 @@ export class BeatflowScene {
       }
     })();
 
+    this.isMobileGpu = (() => {
+      if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+      const uaMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+      const coarse =
+        typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+      return uaMobile || (coarse && Math.min(window.innerWidth, window.innerHeight) <= 920);
+    })();
+    this.isDocumentHidden =
+      typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
     const width = container.clientWidth || window.innerWidth;
     const height = Math.max(1, container.clientHeight || window.innerHeight);
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: !this.isSoftwareGl && initialSettings.graphicsQuality !== 'low',
-      powerPreference: 'high-performance',
+      antialias: !this.isSoftwareGl && initialSettings.graphicsQuality !== 'low' && !this.isMobileGpu,
+      powerPreference: this.isMobileGpu ? 'default' : 'high-performance',
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -666,7 +686,10 @@ export class BeatflowScene {
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     pmrem.dispose();
 
-    const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
+    const maxAniso = Math.min(
+      this.renderer.capabilities.getMaxAnisotropy(),
+      this.isMobileGpu ? 4 : 8,
+    );
     const trackTexs = createCircuitTrackTextures();
     this.roadAlbedoTex = trackTexs.albedo;
     this.roadRoughTex = trackTexs.roughness;
@@ -692,7 +715,7 @@ export class BeatflowScene {
       maxAniso,
       initialTheme,
       this.currentEnvSeed,
-      initialSettings.graphicsQuality,
+      this.getEffectiveQuality(),
       this.currentPalette,
     );
     const initAtmo = this.envManager.getAtmosphere();
@@ -708,7 +731,10 @@ export class BeatflowScene {
     }
 
     window.addEventListener('resize', this.handleResize);
-    this.startLoop();
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+    this.syncLoopState();
   }
 
   private setupPostProcessing(width: number, height: number): void {
@@ -718,8 +744,12 @@ export class BeatflowScene {
     const renderPass = new RenderPass(this.scene, this.cameraRig.camera);
     this.composer.addPass(renderPass);
 
+    const bloomDivisor = this.isMobileGpu ? 3 : 2;
     this.bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(Math.max(1, Math.floor(width / 2)), Math.max(1, Math.floor(height / 2))),
+      new THREE.Vector2(
+        Math.max(1, Math.floor(width / bloomDivisor)),
+        Math.max(1, Math.floor(height / bloomDivisor)),
+      ),
       0.24,
       0.28,
       0.92,
@@ -761,10 +791,14 @@ export class BeatflowScene {
     if (!this.bloomPass) return;
     const effQuality = this.getEffectiveQuality();
     const perfBattery = this.settings.performanceConfig?.performanceMode === 'battery';
-    const enabled = effQuality !== 'low' && !perfBattery;
+    const userBloom = this.settings.visualsConfig?.bloomIntensity ?? 1.0;
+    const menuLowMobile =
+      this.isMobileGpu &&
+      this.renderContext === 'menu' &&
+      this.settings.menuAmbientConfig?.visualIntensity === 'low';
+    const enabled = effQuality !== 'low' && !perfBattery && userBloom > 0.05 && !menuLowMobile;
     this.bloomPass.enabled = enabled;
     const presetScale = getPresetById(this.settings.visualsConfig?.preset ?? 'auto').bloomScale;
-    const userBloom = this.settings.visualsConfig?.bloomIntensity ?? 1.0;
     const baseStrength =
       this.settings.visualIntensity === 'low'
         ? 0.14
@@ -782,7 +816,7 @@ export class BeatflowScene {
       0.05,
       0.65,
     );
-    this.bloomPass.radius = effQuality === 'high' ? 0.32 : 0.25;
+    this.bloomPass.radius = effQuality === 'high' ? (this.isMobileGpu ? 0.26 : 0.32) : 0.22;
   }
 
   private applyQualityPixelRatio(): void {
@@ -792,13 +826,14 @@ export class BeatflowScene {
     }
     const effQuality = this.getEffectiveQuality();
     const perfBattery = this.settings.performanceConfig?.performanceMode === 'battery';
-    const maxPr = perfBattery
-      ? 1
-      : effQuality === 'low'
-        ? 1
-        : effQuality === 'medium'
-          ? 1.5
-          : 2;
+    let maxPr = 2;
+    if (perfBattery || effQuality === 'low') {
+      maxPr = 1;
+    } else if (this.isMobileGpu) {
+      maxPr = effQuality === 'medium' ? 1.25 : 1.5;
+    } else {
+      maxPr = effQuality === 'medium' ? 1.5 : 2;
+    }
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPr));
   }
 
@@ -1388,15 +1423,13 @@ export class BeatflowScene {
       const group = new THREE.Group();
       group.visible = false;
 
-      const coreMat = new THREE.MeshPhysicalMaterial({
+      const coreMat = new THREE.MeshStandardMaterial({
         color: 0x06d6f2,
         emissive: 0x06d6f2,
         emissiveIntensity: 0.42,
-        metalness: 0.18,
-        roughness: 0.24,
-        clearcoat: 0.85,
-        clearcoatRoughness: 0.12,
-        envMapIntensity: 0.4,
+        metalness: 0.24,
+        roughness: 0.18,
+        envMapIntensity: this.isMobileGpu ? 0.32 : 0.48,
       });
 
       const trimMat = new THREE.MeshStandardMaterial({
@@ -1592,7 +1625,7 @@ export class BeatflowScene {
     const atmo = this.envManager.loadEnvironment(
       theme,
       targetSeed,
-      this.settings.graphicsQuality,
+      this.getEffectiveQuality(),
       this.currentPalette,
     );
     this.applyAtmosphere(atmo);
@@ -1718,6 +1751,10 @@ export class BeatflowScene {
       const h = Math.max(1, this.container.clientHeight || window.innerHeight);
       this.composer?.setSize(w, h);
     }
+    if (this.renderContext === 'paused' && !this.suspended && !this.isDocumentHidden) {
+      this.pauseRenderDone = false;
+      this.syncLoopState();
+    }
   }
 
   public startLevel(
@@ -1796,6 +1833,7 @@ export class BeatflowScene {
     this.creatorAppliedBgTheme = null;
     this.isMenuMode = false;
     this.mode = 'playing';
+    this.setRenderContext('gameplay');
     this.cameraRig.triggerGameplayIntro();
     this.resetPooledTrackEffects();
 
@@ -1827,6 +1865,7 @@ export class BeatflowScene {
   ): void {
     this.startLevel(level, palette, callbacks, options.profile, options.environmentOverride);
     this.creatorPlaytestActive = true;
+    this.setRenderContext('playtest');
     this.creatorVirtualClockEnabled = Boolean(options.useVirtualClock);
     this.creatorVirtualTimeSec = Math.max(0, options.startTimeSec ?? 0);
     this.creatorVirtualDurationSec = Math.max(10, options.durationSec ?? 40);
@@ -1899,10 +1938,34 @@ export class BeatflowScene {
 
   public setMenuMode(active: boolean): void {
     this.isMenuMode = active;
-    if (!active) {
+    if (active) {
+      this.setRenderContext('menu');
+    } else {
       this.menuParallaxX = 0;
       this.menuParallaxY = 0;
     }
+    this.syncBloomSettings();
+  }
+
+  public setSuspended(suspended: boolean): void {
+    if (this.suspended === suspended) return;
+    this.suspended = suspended;
+    this.syncLoopState();
+  }
+
+  public isSuspended(): boolean {
+    return this.suspended || this.isDocumentHidden;
+  }
+
+  public setRenderContext(ctx: 'menu' | 'gameplay' | 'playtest' | 'paused'): void {
+    if (this.renderContext === ctx) return;
+    this.renderContext = ctx;
+    this.pauseRenderDone = false;
+    this.accumulatedMenuDt = 0;
+    this.perfFrameAccum = 0;
+    this.perfFrameSamples = 0;
+    this.syncBloomSettings();
+    this.syncLoopState();
   }
 
   public setMenuParallax(nx: number, ny: number): void {
@@ -1936,7 +1999,11 @@ export class BeatflowScene {
 
   public setMode(mode: 'idle' | 'playing' | 'paused' | 'ended'): void {
     this.mode = mode;
-    if (mode === 'idle') {
+    if (mode === 'playing') {
+      this.setRenderContext(this.creatorPlaytestActive ? 'playtest' : 'gameplay');
+    } else if (mode === 'paused') {
+      this.setRenderContext('paused');
+    } else if (mode === 'idle') {
       this.activeLevel = null;
       this.activeProfile = null;
       this.creatorPlaytestActive = false;
@@ -1962,6 +2029,7 @@ export class BeatflowScene {
       }
       this.syncBloomSettings();
       this.renderer.toneMappingExposure = 0.88 * this.getEffectiveBrightness();
+      this.setRenderContext('menu');
     }
   }
 
@@ -2588,6 +2656,7 @@ export class BeatflowScene {
       p.size = (downwardMiss ? 0.85 : 0.75) + Math.random() * 0.85;
       p.color.copy(color);
       spawned++;
+      this.hasActiveParticles = true;
     }
   }
 
@@ -2607,23 +2676,108 @@ export class BeatflowScene {
     return 'groove';
   }
 
+  private handleVisibilityChange = (): void => {
+    this.isDocumentHidden =
+      typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    this.syncLoopState();
+  };
+
+  private stopLoop(): void {
+    this.loopRunning = false;
+    cancelAnimationFrame(this.frameId);
+    clearTimeout(this.frameId);
+    this.frameId = 0;
+  }
+
+  private syncLoopState(): void {
+    if (this.disposed) return;
+    const shouldPauseCompletely = this.suspended || this.isDocumentHidden;
+    if (shouldPauseCompletely) {
+      this.stopLoop();
+      return;
+    }
+    if (!this.loopRunning) {
+      this.clock.getDelta();
+      this.lastRenderTimeMs = 0;
+      this.accumulatedMenuDt = 0;
+      this.startLoop();
+    }
+  }
+
+  private getTargetFrameIntervalMs(): number {
+    if (this.renderContext === 'gameplay' || this.renderContext === 'playtest') {
+      return 0; // Full native vsync for rhythm gameplay & playtest
+    }
+    if (this.renderContext === 'paused') {
+      return this.mode === 'ended' ? 50 : 250;
+    }
+    // Menu idle pacing: ~30fps (~22fps in low/battery) cuts idle GPU load by 50-75%
+    const effQuality = this.getEffectiveQuality();
+    if (effQuality === 'low' || this.settings.performanceConfig?.performanceMode === 'battery') {
+      return 44;
+    }
+    return this.isMobileGpu ? 34 : 32;
+  }
+
+  private renderSceneFrame(): void {
+    const effQuality = this.getEffectiveQuality();
+    const useComposer =
+      !this.isSoftwareGl &&
+      Boolean(this.composer) &&
+      Boolean(this.bloomPass?.enabled) &&
+      effQuality !== 'low';
+    if (useComposer && this.composer) {
+      this.composer.render();
+    } else {
+      this.renderer.render(this.scene, this.cameraRig.camera);
+    }
+  }
+
   private startLoop(): void {
-    const tick = () => {
-      if (this.disposed) return;
-      const rawDt = this.clock.getDelta();
-      const dt = Math.min(rawDt, 0.05);
+    if (this.loopRunning || this.disposed) return;
+    this.loopRunning = true;
 
-      this.update(dt, rawDt);
-
-      const effQuality = this.getEffectiveQuality();
-      if (!this.isSoftwareGl && this.composer && effQuality !== 'low') {
-        this.composer.render();
-      } else {
-        this.renderer.render(this.scene, this.cameraRig.camera);
+    const tick = (nowMs: number) => {
+      if (this.disposed || !this.loopRunning) return;
+      if (this.suspended || this.isDocumentHidden) {
+        this.stopLoop();
+        return;
       }
 
+      const rawDt = this.clock.getDelta();
+
+      // When paused (and not playing defeat/victory outro), render one settled frame then stop burning GPU
+      if (this.renderContext === 'paused' && this.mode === 'paused') {
+        if (!this.pauseRenderDone) {
+          this.pauseRenderDone = true;
+          this.update(0, 0);
+          this.renderSceneFrame();
+        }
+        this.stopLoop();
+        return;
+      }
+
+      const minIntervalMs = this.getTargetFrameIntervalMs();
+      if (minIntervalMs > 0) {
+        this.accumulatedMenuDt += rawDt;
+        if (this.lastRenderTimeMs > 0 && nowMs - this.lastRenderTimeMs < minIntervalMs) {
+          this.frameId = requestAnimationFrame(tick);
+          return;
+        }
+        const stepDt = Math.min(this.accumulatedMenuDt || rawDt, 0.08);
+        this.accumulatedMenuDt = 0;
+        this.lastRenderTimeMs = nowMs;
+        this.update(stepDt, stepDt);
+      } else {
+        const dt = Math.min(rawDt, 0.05);
+        this.lastRenderTimeMs = nowMs;
+        this.update(dt, rawDt);
+      }
+
+      this.renderSceneFrame();
+
       if (this.isSoftwareGl) {
-        this.afterDraw(tick);
+        this.afterDraw(() => tick(performance.now()));
       } else {
         this.frameId = requestAnimationFrame(tick);
       }
@@ -2637,7 +2791,10 @@ export class BeatflowScene {
     const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     gl.flush();
     const poll = () => {
-      if (this.disposed) return;
+      if (this.disposed || !this.loopRunning) {
+        if (sync) gl.deleteSync(sync);
+        return;
+      }
       const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
       if (state === gl.UNSIGNALED) {
         this.frameId = window.setTimeout(poll, 5);
@@ -2722,21 +2879,31 @@ export class BeatflowScene {
   }
 
   private update(dt: number, rawDt = dt): void {
-    // Adaptive FPS scaling when performanceMode === 'auto'
-    if (this.settings.performanceConfig?.performanceMode === 'auto' && !this.isSoftwareGl) {
+    // Adaptive FPS scaling with hysteresis when performanceMode === 'auto' (measured only during active gameplay/playtest)
+    if (
+      this.settings.performanceConfig?.performanceMode === 'auto' &&
+      !this.isSoftwareGl &&
+      (this.renderContext === 'gameplay' || this.renderContext === 'playtest') &&
+      this.mode === 'playing' &&
+      rawDt > 0
+    ) {
       this.perfFrameAccum += rawDt;
       this.perfFrameSamples++;
-      if (this.perfFrameSamples >= 45) {
+      if (this.perfFrameSamples >= 24) {
         const avgDt = this.perfFrameAccum / this.perfFrameSamples;
         this.perfFrameAccum = 0;
         this.perfFrameSamples = 0;
+        const nowMs = performance.now();
         const prevEff = this.autoPerfLevel;
-        if (avgDt > 0.026) {
+        if (avgDt > 0.038) {
+          this.autoPerfLevel = 'low';
+        } else if (avgDt > 0.024) {
           this.autoPerfLevel = this.autoPerfLevel === 'high' ? 'medium' : 'low';
-        } else if (avgDt < 0.0145) {
+        } else if (avgDt < 0.0155 && nowMs - this.lastPerfScaleChangeMs > 8000) {
           this.autoPerfLevel = this.autoPerfLevel === 'low' ? 'medium' : 'high';
         }
         if (this.autoPerfLevel !== prevEff) {
+          this.lastPerfScaleChangeMs = nowMs;
           this.applyQualityPixelRatio();
           this.syncBloomSettings();
         }
@@ -3364,31 +3531,36 @@ export class BeatflowScene {
       }
     }
 
-    // Update burst particles (bounded by pool size)
-    let dirtyParticles = false;
-    for (let i = 0; i < this.MAX_BURST_PARTICLES; i++) {
-      const p = this.particles[i];
-      if (!p.active) continue;
-      dirtyParticles = true;
-      p.life += dt;
-      if (p.life >= p.maxLife) {
-        p.active = false;
-        _mat4.makeTranslation(0, -100, 0);
+    // Update burst particles (skip entire loop when pool is idle)
+    if (this.hasActiveParticles) {
+      let dirtyParticles = false;
+      let anyStillActive = false;
+      for (let i = 0; i < this.MAX_BURST_PARTICLES; i++) {
+        const p = this.particles[i];
+        if (!p.active) continue;
+        dirtyParticles = true;
+        p.life += dt;
+        if (p.life >= p.maxLife) {
+          p.active = false;
+          _mat4.makeTranslation(0, -100, 0);
+          this.particleMesh.setMatrixAt(i, _mat4);
+          continue;
+        }
+        anyStillActive = true;
+        p.vel.y -= 9.5 * dt;
+        p.pos.addScaledVector(p.vel, dt);
+        const s = p.size * (1 - p.life / p.maxLife);
+        _scale.setScalar(Math.max(0.01, s));
+        _quat.identity();
+        _mat4.compose(p.pos, _quat, _scale);
         this.particleMesh.setMatrixAt(i, _mat4);
-        continue;
+        this.particleMesh.setColorAt(i, p.color);
       }
-      p.vel.y -= 9.5 * dt;
-      p.pos.addScaledVector(p.vel, dt);
-      const s = p.size * (1 - p.life / p.maxLife);
-      _scale.setScalar(Math.max(0.01, s));
-      _quat.identity();
-      _mat4.compose(p.pos, _quat, _scale);
-      this.particleMesh.setMatrixAt(i, _mat4);
-      this.particleMesh.setColorAt(i, p.color);
-    }
-    if (dirtyParticles) {
-      this.particleMesh.instanceMatrix.needsUpdate = true;
-      if (this.particleMesh.instanceColor) this.particleMesh.instanceColor.needsUpdate = true;
+      this.hasActiveParticles = anyStillActive;
+      if (dirtyParticles) {
+        this.particleMesh.instanceMatrix.needsUpdate = true;
+        if (this.particleMesh.instanceColor) this.particleMesh.instanceColor.needsUpdate = true;
+      }
     }
 
     // Synchronized gameplay notes + active Holds/Slides
@@ -3652,7 +3824,7 @@ export class BeatflowScene {
       }
 
       const col = this.getNoteDisplayColor(note);
-      const coreMat = slot.coreMesh.material as THREE.MeshPhysicalMaterial;
+      const coreMat = slot.coreMesh.material as THREE.MeshStandardMaterial;
       coreMat.color.copy(col);
       coreMat.emissive.copy(col);
       coreMat.emissiveIntensity = (0.44 + note.intensity * 0.24) * brightScale * glowScale;
@@ -3862,18 +4034,25 @@ export class BeatflowScene {
     this.applyQualityPixelRatio();
     this.composer?.setSize(width, height);
     if (this.bloomPass) {
+      const bloomDivisor = this.isMobileGpu ? 3 : 2;
       this.bloomPass.resolution.set(
-        Math.max(1, Math.floor(width / 2)),
-        Math.max(1, Math.floor(height / 2)),
+        Math.max(1, Math.floor(width / bloomDivisor)),
+        Math.max(1, Math.floor(height / bloomDivisor)),
       );
+    }
+    if (this.renderContext === 'paused' && !this.suspended && !this.isDocumentHidden) {
+      this.pauseRenderDone = false;
+      this.syncLoopState();
     }
   };
 
   public dispose(): void {
     this.disposed = true;
-    cancelAnimationFrame(this.frameId);
-    clearTimeout(this.frameId);
+    this.stopLoop();
     window.removeEventListener('resize', this.handleResize);
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
 
     Object.values(this.noteGeoCache).forEach((entry) => {
       entry.core.dispose();

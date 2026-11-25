@@ -345,6 +345,38 @@ export const DEFAULT_SETTINGS: GameSettings = {
   menuAmbientConfig: DEFAULT_MENU_AMBIENT_CONFIG,
 };
 
+export function isLikelyMobileDevice(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+  const uaMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+  const coarsePointer =
+    typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+  const compactViewport = Math.min(window.innerWidth || 9999, window.innerHeight || 9999) <= 920;
+  return uaMobile || (coarsePointer && compactViewport);
+}
+
+export function getAdaptiveDefaultSettings(): GameSettings {
+  const base = structuredClone(DEFAULT_SETTINGS);
+  if (!isLikelyMobileDevice()) return base;
+
+  // Balanced thermal defaults on mobile/Android to avoid overheating while keeping rich visuals
+  return {
+    ...base,
+    visualIntensity: 'medium',
+    particleIntensity: 'medium',
+    graphicsQuality: 'medium',
+    reflectionQuality: 'medium',
+    performanceConfig: {
+      performanceMode: 'auto',
+      effectFrequency: 'medium',
+      lightingQuality: 'medium',
+    },
+    menuAmbientConfig: {
+      ...base.menuAmbientConfig,
+      visualIntensity: 'medium',
+    },
+  };
+}
+
 function mergeMechanics(
   base: MechanicsConfig,
   incoming?: Partial<MechanicsConfig>,
@@ -372,7 +404,7 @@ function mergeMechanics(
 export function loadSettings(): GameSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return structuredClone(DEFAULT_SETTINGS);
+    if (!raw) return getAdaptiveDefaultSettings();
     const parsed = JSON.parse(raw) as Partial<GameSettings>;
     const normalizedDefaultDiff = normalizeDifficulty(parsed.defaultDifficulty);
     const parsedGen = parsed.generationConfig as Partial<GenerationConfig> | undefined;

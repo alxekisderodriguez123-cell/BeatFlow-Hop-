@@ -171,6 +171,7 @@ export default function App() {
   );
   const [creatorInitialLevel, setCreatorInitialLevel] = useState<BeatflowLevelDocument | null>(null);
   const [creatorAutoPlaytest, setCreatorAutoPlaytest] = useState(false);
+  const [creatorPlaytestActive, setCreatorPlaytestActive] = useState(false);
 
   const activeSongRef = useRef<SongMetadata | null>(null);
   const activeConfigRef = useRef<GenerationConfig>(settings.generationConfig);
@@ -291,15 +292,35 @@ export default function App() {
     saveSettings(settings);
   }, [settings]);
 
-  // Keep menu ambient audio strictly separated from gameplay & creator playtest
+  const sceneVisible =
+    screen === 'menu' ||
+    screen === 'playing' ||
+    (screen === 'creator' && creatorPlaytestActive);
+
+  // Keep menu ambient audio & 3D scene rendering lifecycle strictly aligned to active screen
   useEffect(() => {
-    sceneRef.current?.setMenuMode(screen === 'menu');
+    const sc = sceneRef.current;
+    if (sc) {
+      sc.setMenuMode(screen === 'menu');
+      sc.setSuspended(!sceneVisible);
+      if (sceneVisible) {
+        if (screen === 'menu') {
+          sc.setRenderContext('menu');
+        } else if (screen === 'creator') {
+          sc.setRenderContext('playtest');
+        } else if (paused || Boolean(gameResult)) {
+          sc.setRenderContext('paused');
+        } else {
+          sc.setRenderContext('gameplay');
+        }
+      }
+    }
     if (screen === 'playing' || screen === 'creator' || screen === 'community') {
       menuAmbientAudio.exitToGameplay();
     } else {
       menuAmbientAudio.enterMenu();
     }
-  }, [screen]);
+  }, [screen, sceneVisible, paused, gameResult]);
 
   useEffect(() => {
     return () => {
@@ -870,8 +891,15 @@ export default function App() {
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-[#050714] select-none">
-      {/* Isolated 3D WebGL Canvas Mount */}
-      <div ref={canvasMountRef} className="fixed inset-0 z-0" />
+      {/* Isolated 3D WebGL Canvas Mount (hidden and suspended when screen does not need 3D stage) */}
+      <div
+        ref={canvasMountRef}
+        className={
+          sceneVisible
+            ? 'fixed inset-0 z-0'
+            : 'fixed inset-0 z-0 invisible pointer-events-none'
+        }
+      />
 
       {/* Lightweight non-blocking luminous transition veil */}
       <div
@@ -981,14 +1009,17 @@ export default function App() {
           deviceQuality={settings.graphicsQuality}
           gameSettings={settings}
           scene={sceneRef.current}
+          onPlaytestActiveChange={setCreatorPlaytestActive}
           onBack={() => {
             audioEngine.playUiTick();
             setCreatorInitialLevel(null);
             setCreatorAutoPlaytest(false);
+            setCreatorPlaytestActive(false);
             setScreen('menu');
           }}
           onOpenCommunity={() => {
             audioEngine.playUiTick();
+            setCreatorPlaytestActive(false);
             setScreen('community');
           }}
         />

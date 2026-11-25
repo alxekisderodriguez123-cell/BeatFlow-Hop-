@@ -96,6 +96,7 @@ interface BeatflowCreatorViewProps {
   scene: BeatflowScene | null;
   onBack: () => void;
   onOpenCommunity: () => void;
+  onPlaytestActiveChange?: (active: boolean) => void;
 }
 
 const SNAP_OPTIONS: Array<{ id: BeatSnapDivision; label: string }> = [
@@ -179,6 +180,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
   scene,
   onBack,
   onOpenCommunity,
+  onPlaytestActiveChange,
 }) => {
   const editorRef = useRef<CreatorEditor | null>(null);
   if (!editorRef.current) {
@@ -238,14 +240,45 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     snapshot.level.audio.rights.allowRemixAndLevelUse,
   );
 
-  // Environment thumbnails (cached lazily once)
-  const worldThumbnails = useMemo(() => {
-    const map = new Map<EnvironmentTheme, string>();
-    for (const theme of ALL_ENVIRONMENT_THEMES) {
-      map.set(theme, renderEnvironmentThumbnailDataUrl(theme));
-    }
-    return map;
-  }, []);
+  // Environment thumbnails generated lazily only when BACKGROUNDS tab is opened
+  const [worldThumbnails, setWorldThumbnails] = useState<Map<EnvironmentTheme, string>>(
+    () => new Map(),
+  );
+
+  useEffect(() => {
+    if (categoryTab !== 'backgrounds') return;
+    let cancelled = false;
+    let rafId = 0;
+    const pending = ALL_ENVIRONMENT_THEMES.filter((t) => !worldThumbnails.has(t));
+    if (pending.length === 0) return;
+
+    let idx = 0;
+    const pump = () => {
+      if (cancelled) return;
+      const batch: Array<[EnvironmentTheme, string]> = [];
+      const limit = Math.min(pending.length, idx + 2);
+      for (; idx < limit; idx++) {
+        const theme = pending[idx];
+        batch.push([theme, renderEnvironmentThumbnailDataUrl(theme)]);
+      }
+      if (batch.length > 0) {
+        setWorldThumbnails((prev) => {
+          const next = new Map(prev);
+          for (const [k, v] of batch) next.set(k, v);
+          return next;
+        });
+      }
+      if (idx < pending.length) {
+        rafId = requestAnimationFrame(pump);
+      }
+    };
+
+    rafId = requestAnimationFrame(pump);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
+  }, [categoryTab, worldThumbnails]);
 
   const activeBuildItem = useMemo<CreatorBuildItem | null>(() => {
     return (
@@ -381,7 +414,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
             }),
           false,
         );
-        refreshSnapshot(false);
+        gridCtrlRef.current?.setState({ level: ed.getLevel() });
       },
       onDragResizeLong: (objectId, nextDurationSec) => {
         const ed = editorRef.current;
@@ -401,7 +434,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
             ),
           false,
         );
-        refreshSnapshot(false);
+        gridCtrlRef.current?.setState({ level: ed.getLevel() });
       },
       onDragEnd: (changed) => {
         editorRef.current?.commitInteractiveTransform(changed);
@@ -419,6 +452,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     });
 
     gridCtrlRef.current = grid;
+    grid.setActive(!playtestActiveRef.current);
     setViewportMetrics(grid.getViewportMetrics());
 
     return () => {
@@ -427,6 +461,19 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Suspend 2D grid rendering during 3D playtest & notify parent App of playtest visibility
+  useEffect(() => {
+    const active = Boolean(playtestSession);
+    gridCtrlRef.current?.setActive(!active);
+    onPlaytestActiveChange?.(active);
+  }, [playtestSession, onPlaytestActiveChange]);
+
+  useEffect(() => {
+    return () => {
+      onPlaytestActiveChange?.(false);
+    };
+  }, [onPlaytestActiveChange]);
 
   // Sync mode/tool changes to CreatorGridCanvas
   useEffect(() => {
@@ -1175,11 +1222,20 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
                             : 'border-white/15 opacity-85 hover:opacity-100'
                         }`}
                       >
-                        <img
-                          src={worldThumbnails.get(theme)}
-                          alt={def.displayName}
-                          className="w-full h-full object-cover"
-                        />
+                        {worldThumbnails.get(theme) ? (
+                          <img
+                            src={worldThumbnails.get(theme)}
+                            alt={def.displayName}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div
+                            className="w-full h-full"
+                            style={{
+                              background: `linear-gradient(135deg, ${def.colorPalette.primary}44, ${def.colorPalette.secondary}55)`,
+                            }}
+                          />
+                        )}
                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-1.5 py-1">
                           <div className="text-[10px] font-bold text-white truncate">
                             {def.displayName}
