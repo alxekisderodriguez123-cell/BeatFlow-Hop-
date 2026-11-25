@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
@@ -52,16 +51,92 @@ jobs:
       - name: Synchronize Capacitor
         run: npx cap sync android
 
-      - name: Build Android Debug APK
+      - name: Restore permanent signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$GITHUB_WORKSPACE/android/app/beatflow-release.jks"
+          test -s "$GITHUB_WORKSPACE/android/app/beatflow-release.jks"
+
+      - name: Configure release signing
         working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/app/beatflow-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          gradle_file = Path("app/build.gradle")
+          source = gradle_file.read_text()
+
+          build_types = re.search(r"(?m)^(\s*)buildTypes\s*\{", source)
+          if not build_types:
+              raise SystemExit("buildTypes block not found")
+
+          if "signingConfigs {" not in source:
+              indent = build_types.group(1)
+              signing = (
+                  f"{indent}signingConfigs {{\n"
+                  f"{indent}    release {{\n"
+                  f"{indent}        storeFile file(System.getenv('ANDROID_KEYSTORE_PATH'))\n"
+                  f"{indent}        storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')\n"
+                  f"{indent}        keyAlias System.getenv('ANDROID_KEY_ALIAS')\n"
+                  f"{indent}        keyPassword System.getenv('ANDROID_KEY_PASSWORD')\n"
+                  f"{indent}    }}\n"
+                  f"{indent}}}\n\n"
+              )
+              source = source[:build_types.start()] + signing + source[build_types.start():]
+
+          build_types = re.search(r"(?m)^(\s*)buildTypes\s*\{", source)
+          tail = source[build_types.end():]
+          release = re.search(r"(?m)^(\s*)release\s*\{", tail)
+
+          if not release:
+              raise SystemExit("release buildType not found")
+
+          release_start = build_types.end() + release.end()
+          if "signingConfig signingConfigs.release" not in source[release_start:release_start + 500]:
+              indent = release.group(1)
+              source = (
+                  source[:release_start]
+                  + f"\n{indent}    signingConfig signingConfigs.release"
+                  + source[release_start:]
+              )
+
+          version = re.compile(r"(?m)^(\s*)versionCode\s+\d+")
+          if not version.search(source):
+              raise SystemExit("versionCode not found")
+
+          source = version.sub(
+              r"\1versionCode Integer.parseInt(System.getenv('GITHUB_RUN_NUMBER') ?: '1')",
+              source,
+              count=1
+          )
+
+          gradle_file.write_text(source)
+          print("Permanent signing configured successfully.")
+          PY
+
+      - name: Build signed Android Release APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/app/beatflow-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
 
-      - name: Upload APK artifact
+      - name: Upload signed APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: BEATFLOW-HOP-Android-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
