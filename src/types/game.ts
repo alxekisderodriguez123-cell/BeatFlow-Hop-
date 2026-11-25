@@ -419,6 +419,12 @@ export interface LevelNote {
   pitchClass?: number;
   hit: boolean;
   missed: boolean;
+  /** Optional Creator v3 per-casilla visual overrides (left undefined in Classic Mode) */
+  customColor?: string;
+  customSecondaryColor?: string;
+  customColorComboMode?: 'solid' | 'gradient' | 'alternating' | 'split';
+  customCasillaShape?: 'square' | 'circle' | 'triangle' | 'diamond' | 'long';
+  customHitExplosion?: 'none' | 'sparks' | 'shockwave' | 'ring' | 'burst' | 'neon_flame';
 }
 
 export interface GeneratedLevel {

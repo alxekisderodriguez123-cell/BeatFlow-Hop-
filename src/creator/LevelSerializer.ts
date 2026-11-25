@@ -4,11 +4,13 @@ import type {
   CreatorObject,
   CustomGameplayMode,
   CustomGameplayRules,
+  ViewLayerVisibility,
 } from '../types/creator';
 import type { DifficultyLevel, EnvironmentTheme, LaneCount } from '../types/game';
 import { GroupManager } from './GroupManager';
+import { concreteShapeToCasillaShape } from './ObjectLibrary';
 
-export const CURRENT_BFN_SCHEMA_VERSION = 2;
+export const CURRENT_BFN_SCHEMA_VERSION = 3;
 export const REQUIRED_GAME_VERSION = '2.0.0';
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'eval', 'script', 'code']);
@@ -26,6 +28,18 @@ function sanitizePlainValue<T>(val: T, depth = 0): T {
   return out as T;
 }
 
+export function createDefaultViewSettings(): ViewLayerVisibility {
+  return {
+    grid: true,
+    casillas: true,
+    triggerLines: true,
+    cameraFx: true,
+    pulses: true,
+    particles: true,
+    beatGuides: true,
+  };
+}
+
 export function createDefaultGameplayRules(
   mode: CustomGameplayMode = 'classic_lanes',
   laneCount: LaneCount = 4,
@@ -37,7 +51,7 @@ export function createDefaultGameplayRules(
     approachSpeed: 1.0,
     hitWindowMs: mode === 'precision_timing' ? 75 : 135,
     maxMisses: mode === 'timed_survival' ? 1 : 999,
-    enableObstacles: true,
+    enableObstacles: false,
     enableTouchZones: mode === 'touch_zones' || mode === 'experimental',
     enableFever: true,
     scorePerHit: 120,
@@ -64,7 +78,9 @@ export function createEmptyLevelDocument(options: {
   songId?: string;
 } = {}): BeatflowLevelDocument {
   const nowIso = new Date().toISOString();
-  const id = options.levelId || `lvl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const id =
+    options.levelId ||
+    `lvl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const groups = GroupManager.ensureDefaultGroup([]);
 
   return {
@@ -73,7 +89,7 @@ export function createEmptyLevelDocument(options: {
     authorId: options.authorId || 'local-creator',
     authorName: options.authorName || 'Creador Local',
     levelName: options.levelName || 'Nuevo Nivel BeatFlow',
-    description: 'Nivel personalizado creado con BeatFlow Creator.',
+    description: 'Nivel de casillas creado con BeatFlow Creator.',
     difficulty: options.difficulty || 'normal',
     creationDate: nowIso,
     updatedDate: nowIso,
@@ -135,11 +151,13 @@ export function createEmptyLevelDocument(options: {
       hits: 0,
       phase: 0,
     },
+    viewSettings: createDefaultViewSettings(),
   };
 }
 
 /**
- * Migrates v1 `.bfn` documents cleanly to v2 schema without losing notes, triggers, or metadata.
+ * Migrates v1/v2 `.bfn` documents cleanly to v3 schema without losing notes,
+ * triggers, metadata, or legacy objects (readable compatibility preserved).
  */
 export function migrateLevelDocument(raw: Record<string, unknown>): BeatflowLevelDocument {
   const sanitized = sanitizePlainValue(raw);
@@ -160,19 +178,36 @@ export function migrateLevelDocument(raw: Record<string, unknown>): BeatflowLeve
     schemaVersion: CURRENT_BFN_SCHEMA_VERSION,
     requiredGameVersion: REQUIRED_GAME_VERSION,
     groups: GroupManager.ensureDefaultGroup(rawGroups),
-    objects: rawObjects.map((o) => ({
-      ...o,
-      groupIds: Array.isArray(o.groupIds) && o.groupIds.length > 0 ? o.groupIds : [1],
-      material: {
-        color: o.material?.color || '#22d3ee',
-        emissive: o.material?.emissive || o.material?.color || '#22d3ee',
-        opacity: typeof o.material?.opacity === 'number' ? o.material.opacity : 1,
-        emission: typeof o.material?.emission === 'number' ? o.material.emission : 0.85,
-        glowIntensity: typeof o.material?.glowIntensity === 'number' ? o.material.glowIntensity : 0.9,
-        blendMode: o.material?.blendMode || 'normal',
-        shape: o.material?.shape || 'tile',
-      },
-    })),
+    objects: rawObjects.map((o) => {
+      const shape = o.material?.shape || 'square';
+      const noteData = o.noteData
+        ? {
+            ...o.noteData,
+            casillaShape:
+              o.noteData.casillaShape ??
+              concreteShapeToCasillaShape(shape, o.noteData.kind),
+          }
+        : undefined;
+      return {
+        ...o,
+        groupIds: Array.isArray(o.groupIds) && o.groupIds.length > 0 ? o.groupIds : [1],
+        material: {
+          color: o.material?.color || '#22d3ee',
+          emissive: o.material?.emissive || o.material?.color || '#22d3ee',
+          secondaryColor: o.material?.secondaryColor || '#ec4899',
+          colorComboMode: o.material?.colorComboMode || 'solid',
+          opacity: typeof o.material?.opacity === 'number' ? o.material.opacity : 1,
+          emission: typeof o.material?.emission === 'number' ? o.material.emission : 0.85,
+          glowIntensity: typeof o.material?.glowIntensity === 'number' ? o.material.glowIntensity : 0.9,
+          blendMode: o.material?.blendMode || 'normal',
+          shape,
+          hitExplosion:
+            o.material?.hitExplosion ||
+            (o.type === 'note_hold' ? 'neon_flame' : o.noteData ? 'shockwave' : 'none'),
+        },
+        noteData,
+      };
+    }),
     timelineKeyframes: Array.isArray(sanitized.timelineKeyframes)
       ? (sanitized.timelineKeyframes as BeatflowLevelDocument['timelineKeyframes'])
       : [],
@@ -204,10 +239,13 @@ export function migrateLevelDocument(raw: Record<string, unknown>): BeatflowLeve
         ...(((sanitized.audio as Partial<BeatflowLevelDocument['audio']> | undefined)?.rights) ?? {}),
       },
     },
+    viewSettings: {
+      ...createDefaultViewSettings(),
+      ...((sanitized.viewSettings as Partial<ViewLayerVisibility> | undefined) ?? {}),
+    },
   };
 
-  // v1 compatibility: ensure version bumped & asset references refreshed
-  if (srcSchema < 2) {
+  if (srcSchema < CURRENT_BFN_SCHEMA_VERSION) {
     merged.version = Math.max(1, Number(merged.version || 1));
   }
   merged.assetReferences = collectAssetReferences(merged);
@@ -220,6 +258,9 @@ export function collectAssetReferences(doc: BeatflowLevelDocument): string[] {
   if (doc.audio.songId) refs.add(`song:${doc.audio.songId}`);
   for (const obj of doc.objects) {
     refs.add(`obj:${obj.type}`);
+    if (obj.trigger?.type === 'background' && obj.trigger.params.theme) {
+      refs.add(`env:${obj.trigger.params.theme}`);
+    }
   }
   return Array.from(refs);
 }

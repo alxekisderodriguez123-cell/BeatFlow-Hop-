@@ -1,7 +1,7 @@
 import type { CreatorObject, TimelineKeyframe, TimelineMarker } from '../types/creator';
 import { generateCreatorObjectId } from './ObjectLibrary';
 
-export type BeatSnapDivision = 'free' | '1/1' | '1/2' | '1/4' | '1/8';
+export type BeatSnapDivision = 'free' | '1/1' | '1/2' | '1/4' | '1/8' | '1/16';
 
 export interface BarBeatPosition {
   bar: number; // 1-indexed
@@ -56,6 +56,8 @@ export function getSnapStepSec(bpm: number, division: BeatSnapDivision): number 
       return beatDur / 4;
     case '1/8':
       return beatDur / 8;
+    case '1/16':
+      return beatDur / 16;
   }
 }
 

@@ -451,6 +451,19 @@ export class TriggerSystem {
         break;
       }
 
+      case 'camera_fx': {
+        cameraCtrl.triggerCameraFx(obj.id, ctx.currentTime, trig.params);
+        effectCtrl.triggerCameraFx(obj.id, ctx.currentTime, trig.params);
+        this.pushLog({
+          id: `${obj.id}-${ctx.currentTime.toFixed(2)}`,
+          name: obj.name,
+          type: 'camera_fx',
+          timeSec: ctx.currentTime,
+          detail: `Camera FX: ${trig.params.fxKind}`,
+        });
+        break;
+      }
+
       case 'screen_fx': {
         effectCtrl.trigger(obj.id, ctx.currentTime, trig.params);
         this.pushLog({
@@ -459,6 +472,30 @@ export class TriggerSystem {
           type: 'screen_fx',
           timeSec: ctx.currentTime,
           detail: `FX: ${trig.params.effect}`,
+        });
+        break;
+      }
+
+      case 'screen_pulse': {
+        effectCtrl.triggerScreenPulse(obj.id, ctx.currentTime, trig.params);
+        this.pushLog({
+          id: `${obj.id}-${ctx.currentTime.toFixed(2)}`,
+          name: obj.name,
+          type: 'screen_pulse',
+          timeSec: ctx.currentTime,
+          detail: `Pulse: ${trig.params.pulseKind}`,
+        });
+        break;
+      }
+
+      case 'background': {
+        effectCtrl.triggerBackground(obj.id, ctx.currentTime, trig.params);
+        this.pushLog({
+          id: `${obj.id}-${ctx.currentTime.toFixed(2)}`,
+          name: obj.name,
+          type: 'background',
+          timeSec: ctx.currentTime,
+          detail: `Background: ${trig.params.theme ?? 'modulación'}`,
         });
         break;
       }

@@ -121,6 +121,14 @@ export function validateLevelDocument(
       obj.type === 'interactive_orb'
     ) {
       playableCount++;
+      if (obj.lane < 0 || obj.lane >= level.gameplayRules.laneCount) {
+        issues.push({
+          severity: 'warning',
+          code: 'OUT_OF_RANGE_LANE',
+          message: `La casilla "${obj.name}" está fuera del rango de carriles (0..${level.gameplayRules.laneCount - 1}).`,
+          objectId: obj.id,
+        });
+      }
     }
 
     if (obj.trigger?.type === 'spawn' && !obj.trigger.params.targetEventId.trim()) {
@@ -137,7 +145,7 @@ export function validateLevelDocument(
     issues.push({
       severity: 'warning',
       code: 'NO_PLAYABLE_NOTES',
-      message: 'El nivel aún no contiene notas o zonas jugables (solo visual).',
+      message: 'El nivel aún no contiene casillas jugables.',
     });
   }
 

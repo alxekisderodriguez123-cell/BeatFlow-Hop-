@@ -25,8 +25,52 @@ export type BlendModeType = 'normal' | 'additive' | 'multiply' | 'screen';
 
 export type ObjectCategory = 'gameplay' | 'decoration' | 'effects' | 'control';
 
+export type CreatorMainTab = 'build' | 'edit' | 'view';
+
+export type CreatorCategoryId = 'casillas' | 'camera_fx' | 'pulses' | 'backgrounds';
+
+export type CasillaShape = 'square' | 'circle' | 'triangle' | 'diamond' | 'long';
+
+export type HitExplosionStyle =
+  | 'none'
+  | 'sparks'
+  | 'shockwave'
+  | 'ring'
+  | 'burst'
+  | 'neon_flame';
+
+export type ColorComboMode = 'solid' | 'gradient' | 'alternating' | 'split';
+
+export type CameraFxKind =
+  | 'shake'
+  | 'border_lights'
+  | 'zoom'
+  | 'chromatic'
+  | 'glitch'
+  | 'invert_colors'
+  | 'flash'
+  | 'rotation'
+  | 'blur'
+  | 'focus'
+  | 'distortion'
+  | 'vignette'
+  | 'motion_blur'
+  | 'color_grading';
+
+export type PulseKind =
+  | 'borders_4'
+  | 'border_top'
+  | 'border_bottom'
+  | 'borders_side'
+  | 'full_flash'
+  | 'radial_pulse'
+  | 'color_pulse'
+  | 'progressive_glow';
+
+export type AudioReactiveBand = 'none' | 'low' | 'mid' | 'high' | 'energy';
+
 export type CreatorObjectType =
-  // Gameplay
+  // Gameplay (Casillas & legacy readable types)
   | 'note_tap'
   | 'note_hold'
   | 'note_flick'
@@ -38,7 +82,7 @@ export type CreatorObjectType =
   | 'platform'
   | 'interactive_orb'
   | 'speed_portal'
-  // Decoration
+  // Decoration (legacy readable)
   | 'geom_box'
   | 'geom_triangle'
   | 'geom_cylinder'
@@ -50,7 +94,10 @@ export type CreatorObjectType =
   | 'light_beacon'
   | 'particle_prop'
   | 'ambient_element'
-  // Effects
+  // Effects & Triggers
+  | 'camera_fx_trigger'
+  | 'pulse_trigger'
+  | 'background_trigger'
   | 'particle_emitter'
   | 'light_source'
   | 'distortion_field'
@@ -76,7 +123,10 @@ export type TriggerType =
   | 'camera'
   | 'screen_fx'
   | 'audio'
-  | 'logic';
+  | 'logic'
+  | 'camera_fx'
+  | 'screen_pulse'
+  | 'background';
 
 export interface Vec3Tuple {
   x: number;
@@ -87,16 +137,20 @@ export interface Vec3Tuple {
 export interface CreatorMaterialSpec {
   color: string;
   emissive: string;
+  secondaryColor?: string;
+  colorComboMode?: ColorComboMode;
   opacity: number; // 0..1
   emission: number; // 0..2.5
   glowIntensity: number; // 0..2
   blendMode: BlendModeType;
   shape: ConcreteNoteShape;
+  hitExplosion?: HitExplosionStyle;
 }
 
 export interface CreatorNoteData {
   lane: number;
   kind: NoteKind;
+  casillaShape?: CasillaShape;
   durationSec: number;
   flickDirection?: FlickDirection;
   slideTargetLane?: number;
@@ -300,6 +354,74 @@ export interface LogicTriggerParams {
   targetGroupId?: number;
 }
 
+export interface CameraFxTriggerParams {
+  fxKind: CameraFxKind;
+  intensity: number; // 0..2.0
+  duration: number; // seconds
+  fadeIn: number;
+  fadeOut: number;
+  easing: EasingType;
+  color: string;
+  secondaryColor?: string;
+  zoomFovDelta?: number;
+  rotationDeg?: number;
+  frequency?: number; // shake / glitch speed
+  syncWithBpm: boolean;
+  delay: number;
+}
+
+export interface ScreenPulseTriggerParams {
+  pulseKind: PulseKind;
+  color: string;
+  secondaryColor?: string;
+  intensity: number; // 0..2.0
+  duration: number;
+  fadeIn: number;
+  fadeOut: number;
+  density: number; // 0.2..2.0
+  speed: number; // 0.2..3.0
+  smoothness: number; // 0..1
+  syncWithBpm: boolean;
+  audioReactiveBand: AudioReactiveBand;
+  edgeMask: {
+    top: boolean;
+    bottom: boolean;
+    left: boolean;
+    right: boolean;
+  };
+  blendMode: BlendModeType;
+  delay: number;
+}
+
+export interface BackgroundTriggerParams {
+  theme?: EnvironmentTheme;
+  primaryColor: string;
+  secondaryColor: string;
+  brightness: number; // 0.3..1.8
+  saturation: number; // 0..2.0
+  parallaxSpeed: number; // 0.2..2.5
+  scrollSpeed: number; // 0.2..2.5
+  particleDensity: number; // 0..2.0
+  transitionDuration: number;
+  layerVisibility: {
+    sky: boolean;
+    midground: boolean;
+    foreground: boolean;
+  };
+  easing: EasingType;
+  delay: number;
+}
+
+export interface ViewLayerVisibility {
+  grid: boolean;
+  casillas: boolean;
+  triggerLines: boolean;
+  cameraFx: boolean;
+  pulses: boolean;
+  particles: boolean;
+  beatGuides: boolean;
+}
+
 export type TriggerConfigPayload =
   | { type: 'color'; params: ColorTriggerParams }
   | { type: 'alpha'; params: AlphaTriggerParams }
@@ -312,7 +434,10 @@ export type TriggerConfigPayload =
   | { type: 'camera'; params: CameraTriggerParams }
   | { type: 'screen_fx'; params: ScreenFxTriggerParams }
   | { type: 'audio'; params: AudioTriggerParams }
-  | { type: 'logic'; params: LogicTriggerParams };
+  | { type: 'logic'; params: LogicTriggerParams }
+  | { type: 'camera_fx'; params: CameraFxTriggerParams }
+  | { type: 'screen_pulse'; params: ScreenPulseTriggerParams }
+  | { type: 'background'; params: BackgroundTriggerParams };
 
 export interface CreatorObject {
   id: string;
@@ -443,7 +568,7 @@ export interface LevelAudioMetadata {
 }
 
 export interface BeatflowLevelDocument {
-  schemaVersion: number; // Current = 2
+  schemaVersion: number; // Current = 3
   levelId: string;
   authorId: string;
   authorName: string;
@@ -465,6 +590,7 @@ export interface BeatflowLevelDocument {
   timelineKeyframes: TimelineKeyframe[];
   markers: TimelineMarker[];
   variables: Record<string, number>;
+  viewSettings?: ViewLayerVisibility;
 }
 
 export interface CommunityMusicTrack {

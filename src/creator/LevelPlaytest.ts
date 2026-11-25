@@ -283,7 +283,11 @@ export class LevelPlaytest {
     );
 
     this.lastCameraState = this.cameraCtrl.evaluate(this.currentTime);
-    this.lastEffectsState = this.effectCtrl.evaluate(this.currentTime);
+    this.lastEffectsState = this.effectCtrl.evaluate(
+      this.currentTime,
+      this.level.audio.bpm,
+      this.lastLighting,
+    );
 
     this.gameplay.step(
       this.currentTime,

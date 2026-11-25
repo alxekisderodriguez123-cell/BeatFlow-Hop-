@@ -1,20 +1,42 @@
 import type { DifficultyLevel, LaneCount, MusicProfile } from '../types/game';
 import type {
   BeatflowLevelDocument,
+  CreatorMaterialSpec,
   CreatorObject,
   CreatorObjectType,
   TimelineKeyframe,
   TimelineMarker,
+  TriggerConfigPayload,
   TriggerType,
+  ViewLayerVisibility,
 } from '../types/creator';
 import { getPresetGenerationConfig } from '../services/recordsStorage';
 import { generateProceduralLevel } from '../services/levelGenerator';
-import { createObjectFromTemplate, generateCreatorObjectId } from './ObjectLibrary';
+import {
+  CREATOR_BUILD_ITEMS,
+  CreatorBuildItem,
+  createObjectFromBuildItem,
+  createObjectFromTemplate,
+  generateCreatorObjectId,
+} from './ObjectLibrary';
 import { GroupManager } from './GroupManager';
-import { BeatSnapDivision, duplicateObjectsSequence, snapTimeToBeat } from './TimelineEditor';
-import { createEmptyLevelDocument } from './LevelSerializer';
+import {
+  BeatSnapDivision,
+  duplicateObjectsSequence,
+  getSnapStepSec,
+  snapTimeToBeat,
+} from './TimelineEditor';
+import { createDefaultViewSettings, createEmptyLevelDocument } from './LevelSerializer';
 
-export type EditorToolMode = 'select' | 'move' | 'rotate' | 'scale' | 'place' | 'box_select';
+export type EditorToolMode =
+  | 'select'
+  | 'move'
+  | 'rotate'
+  | 'scale'
+  | 'place'
+  | 'box_select'
+  | 'multi_select'
+  | 'resize_long';
 
 export interface CreatorEditorSnapshot {
   level: BeatflowLevelDocument;
@@ -32,11 +54,11 @@ const MAX_UNDO_HISTORY = 60;
 
 /**
  * Self-contained BeatFlow Creator editor state controller:
- * - History Undo/Redo stack
- * - Multi-selection, clipboard copy/cut/paste/duplicate
- * - Grid & Beat snapping, alignment tools
- * - Layer visibility & lock, Group operations
- * - Optional MP3 auto-pattern assistant generating fully editable CreatorObjects
+ * - History Undo/Redo stack (with batched interactive gesture support)
+ * - Multi-selection, clipboard copy/cut/paste/duplicate, pattern repeat
+ * - Musical Beat snapping (1/1, 1/2, 1/4, 1/8, 1/16, free)
+ * - 4-way movement, long-tile duration resize, grouping & batch RGB updates
+ * - Visual-only ViewLayerVisibility toggles
  */
 export class CreatorEditor {
   private level: BeatflowLevelDocument;
@@ -48,12 +70,14 @@ export class CreatorEditor {
   private clipboard: CreatorObject[] = [];
   private undoStack: BeatflowLevelDocument[] = [];
   private redoStack: BeatflowLevelDocument[] = [];
+  private interactiveGestureSnapshot: BeatflowLevelDocument | null = null;
 
   constructor(initialLevel?: BeatflowLevelDocument) {
-    this.level = initialLevel
-      ? structuredClone(initialLevel)
-      : createEmptyLevelDocument();
+    this.level = initialLevel ? structuredClone(initialLevel) : createEmptyLevelDocument();
     this.level.groups = GroupManager.ensureDefaultGroup(this.level.groups);
+    if (!this.level.viewSettings) {
+      this.level.viewSettings = createDefaultViewSettings();
+    }
   }
 
   public getSnapshot(): CreatorEditorSnapshot {
@@ -74,10 +98,29 @@ export class CreatorEditor {
     return this.level;
   }
 
+  public getViewSettings(): ViewLayerVisibility {
+    return this.level.viewSettings ?? createDefaultViewSettings();
+  }
+
+  public updateViewSettings(patch: Partial<ViewLayerVisibility>): ViewLayerVisibility {
+    const next: ViewLayerVisibility = {
+      ...this.getViewSettings(),
+      ...patch,
+    };
+    this.level = {
+      ...this.level,
+      viewSettings: next,
+    };
+    return next;
+  }
+
   public setLevel(next: BeatflowLevelDocument, recordHistory = true): void {
     if (recordHistory) this.pushUndo();
     this.level = structuredClone(next);
     this.level.groups = GroupManager.ensureDefaultGroup(this.level.groups);
+    if (!this.level.viewSettings) {
+      this.level.viewSettings = createDefaultViewSettings();
+    }
     this.selectedIds.clear();
   }
 
@@ -87,6 +130,24 @@ export class CreatorEditor {
       this.undoStack.shift();
     }
     this.redoStack = [];
+  }
+
+  public beginInteractiveTransform(): void {
+    if (!this.interactiveGestureSnapshot) {
+      this.interactiveGestureSnapshot = structuredClone(this.level);
+    }
+  }
+
+  public commitInteractiveTransform(changed: boolean): void {
+    if (!this.interactiveGestureSnapshot) return;
+    if (changed) {
+      this.undoStack.push(this.interactiveGestureSnapshot);
+      if (this.undoStack.length > MAX_UNDO_HISTORY) {
+        this.undoStack.shift();
+      }
+      this.redoStack = [];
+    }
+    this.interactiveGestureSnapshot = null;
   }
 
   public undo(): boolean {
@@ -105,6 +166,9 @@ export class CreatorEditor {
     if (!next) return false;
     this.undoStack.push(structuredClone(this.level));
     this.level = next;
+    this.selectedIds = new Set(
+      Array.from(this.selectedIds).filter((id) => this.level.objects.some((o) => o.id === id)),
+    );
     return true;
   }
 
@@ -114,6 +178,11 @@ export class CreatorEditor {
 
   public setSnapDivision(div: BeatSnapDivision): void {
     this.snapDivision = div;
+  }
+
+  public getSnapStepSec(): number {
+    const step = getSnapStepSec(this.level.audio.bpm, this.snapDivision);
+    return step > 0 ? step : 0.05;
   }
 
   public setGridSize(size: number): void {
@@ -165,6 +234,43 @@ export class CreatorEditor {
     );
   }
 
+  public placeBuildItem(
+    item: CreatorBuildItem,
+    options: {
+      timeSec: number;
+      lane: number;
+    },
+  ): CreatorObject {
+    this.pushUndo();
+    const laneCount = this.level.gameplayRules.laneCount;
+    const snappedTime = this.snapTime(options.timeSec);
+    const created = createObjectFromBuildItem(item, {
+      timeSec: snappedTime,
+      lane: options.lane,
+      laneCount,
+      primaryPaletteColor: this.level.audio.palette.primary,
+      secondaryPaletteColor: this.level.audio.palette.secondary,
+    });
+    created.layer = this.activeLayer;
+
+    // Ensure duration grows automatically if placing far into timeline
+    const neededDuration = Math.max(
+      this.level.audio.durationSec,
+      Math.ceil(snappedTime + (created.noteData?.durationSec ?? 0) + 4),
+    );
+
+    this.level = {
+      ...this.level,
+      audio:
+        neededDuration > this.level.audio.durationSec
+          ? { ...this.level.audio, durationSec: neededDuration }
+          : this.level.audio,
+      objects: [...this.level.objects, created].sort((a, b) => a.timeSec - b.timeSec),
+    };
+    this.selectedIds = new Set([created.id]);
+    return created;
+  }
+
   public placeObject(
     type: CreatorObjectType,
     options: {
@@ -199,7 +305,10 @@ export class CreatorEditor {
     return created;
   }
 
-  public mutateObjects(updater: (objects: CreatorObject[]) => CreatorObject[], recordHistory = true): void {
+  public mutateObjects(
+    updater: (objects: CreatorObject[]) => CreatorObject[],
+    recordHistory = true,
+  ): void {
     if (recordHistory) this.pushUndo();
     this.level = {
       ...this.level,
@@ -207,9 +316,157 @@ export class CreatorEditor {
     };
   }
 
-  public mutateLevel(updater: (doc: BeatflowLevelDocument) => BeatflowLevelDocument, recordHistory = true): void {
+  public mutateLevel(
+    updater: (doc: BeatflowLevelDocument) => BeatflowLevelDocument,
+    recordHistory = true,
+  ): void {
     if (recordHistory) this.pushUndo();
     this.level = updater(this.level);
+  }
+
+  /**
+   * 4-way movement for selected items (↑↓ time, ←→ lane).
+   */
+  public moveSelected(
+    deltaLane: number,
+    deltaTimeSec: number,
+    recordHistory = true,
+  ): boolean {
+    if (this.selectedIds.size === 0) return false;
+    const laneCount = this.level.gameplayRules.laneCount;
+    let movedAny = false;
+
+    this.mutateObjects(
+      (objs) =>
+        objs.map((o) => {
+          if (!this.selectedIds.has(o.id) || GroupManager.isObjectLocked(o, this.level.groups)) {
+            return o;
+          }
+          const rawNextTime = Math.max(0, o.timeSec + deltaTimeSec);
+          const nextTime =
+            deltaTimeSec !== 0 ? this.snapTime(rawNextTime) : o.timeSec;
+          const isLaneBound = o.lane >= 0 && !o.trigger;
+          const nextLane = isLaneBound
+            ? Math.max(0, Math.min(laneCount - 1, o.lane + deltaLane))
+            : o.lane;
+          const nextX =
+            isLaneBound && nextLane !== o.lane
+              ? Number(((nextLane - (laneCount - 1) / 2) * 1.45).toFixed(2))
+              : o.position.x;
+
+          if (nextTime !== o.timeSec || nextLane !== o.lane) {
+            movedAny = true;
+          }
+
+          return {
+            ...o,
+            timeSec: nextTime,
+            lane: nextLane,
+            position: { ...o.position, x: nextX },
+            noteData: o.noteData
+              ? {
+                  ...o.noteData,
+                  lane: isLaneBound ? nextLane : o.noteData.lane,
+                }
+              : undefined,
+          };
+        }),
+      recordHistory,
+    );
+    return movedAny;
+  }
+
+  public resizeLongNote(
+    objectId: string,
+    nextDurationSec: number,
+    recordHistory = true,
+  ): boolean {
+    const target = this.level.objects.find((o) => o.id === objectId);
+    if (!target || !target.noteData) return false;
+    if (GroupManager.isObjectLocked(target, this.level.groups)) return false;
+
+    const minDur = Math.max(0.1, Math.min(0.25, this.getSnapStepSec()));
+    const step = this.snapDivision === 'free' ? 0.05 : this.getSnapStepSec();
+    const snappedDur =
+      step > 0
+        ? Math.max(minDur, Number((Math.round(nextDurationSec / step) * step).toFixed(3)))
+        : Math.max(0.1, Number(nextDurationSec.toFixed(3)));
+    const clamped = Math.min(16, snappedDur);
+
+    this.mutateObjects(
+      (objs) =>
+        objs.map((o) => {
+          if (o.id !== objectId || !o.noteData) return o;
+          const isHold = o.type === 'note_hold' || o.type === 'note_slide';
+          return {
+            ...o,
+            type: isHold ? o.type : 'note_hold',
+            noteData: {
+              ...o.noteData,
+              kind: o.noteData.kind === 'slide' ? 'slide' : 'hold',
+              casillaShape: 'long',
+              durationSec: clamped,
+            },
+          };
+        }),
+      recordHistory,
+    );
+    return true;
+  }
+
+  public batchUpdateMaterial(
+    patch: Partial<CreatorMaterialSpec>,
+    recordHistory = true,
+  ): void {
+    if (this.selectedIds.size === 0) return;
+    this.mutateObjects(
+      (objs) =>
+        objs.map((o) => {
+          if (!this.selectedIds.has(o.id) || GroupManager.isObjectLocked(o, this.level.groups)) {
+            return o;
+          }
+          const nextColor = patch.color ?? o.material.color;
+          return {
+            ...o,
+            material: {
+              ...o.material,
+              ...patch,
+              emissive: patch.emissive ?? nextColor,
+            },
+          };
+        }),
+      recordHistory,
+    );
+  }
+
+  public updateObjectTrigger(
+    objectId: string,
+    trigger: TriggerConfigPayload,
+    recordHistory = true,
+  ): void {
+    this.mutateObjects(
+      (objs) =>
+        objs.map((o) => {
+          if (o.id !== objectId || GroupManager.isObjectLocked(o, this.level.groups)) return o;
+          return {
+            ...o,
+            material: {
+              ...o.material,
+              color:
+                'color' in trigger.params && typeof trigger.params.color === 'string'
+                  ? trigger.params.color
+                  : 'pulseColor' in trigger.params && typeof trigger.params.pulseColor === 'string'
+                    ? trigger.params.pulseColor
+                    : 'primaryColor' in trigger.params &&
+                        typeof trigger.params.primaryColor === 'string'
+                      ? trigger.params.primaryColor
+                      : o.material.color,
+            },
+            trigger,
+          };
+        }),
+      recordHistory,
+    );
   }
 
   public deleteSelected(): number {
@@ -274,6 +531,58 @@ export class CreatorEditor {
     return created;
   }
 
+  /**
+   * Repeat Pattern (PDF 2 requirement): repeats selected pattern N times preserving
+   * internal spacing, colors, shapes, durations, and trigger parameters.
+   */
+  public repeatSelectedPattern(repeatCount = 1, gapBeats = 1): CreatorObject[] {
+    if (this.selectedIds.size === 0 || repeatCount <= 0) return [];
+    const selected = this.level.objects
+      .filter((o) => this.selectedIds.has(o.id))
+      .sort((a, b) => a.timeSec - b.timeSec);
+    if (selected.length === 0) return [];
+
+    this.pushUndo();
+    const minTime = selected[0].timeSec;
+    const maxEndTime = Math.max(
+      ...selected.map((o) => o.timeSec + (o.noteData?.durationSec ?? 0)),
+    );
+    const beatDur = 60 / Math.max(40, this.level.audio.bpm);
+    const span = Math.max(beatDur * 0.5, maxEndTime - minTime);
+    const stepStride = span + beatDur * Math.max(0, gapBeats);
+
+    const created: CreatorObject[] = [];
+    for (let r = 1; r <= repeatCount; r++) {
+      const offset = stepStride * r;
+      for (const item of selected) {
+        created.push({
+          ...structuredClone(item),
+          id: generateCreatorObjectId(item.category.slice(0, 3)),
+          timeSec: Math.max(0, Number((item.timeSec + offset).toFixed(3))),
+        });
+      }
+    }
+
+    const maxNewTime = Math.max(
+      ...created.map((o) => o.timeSec + (o.noteData?.durationSec ?? 0)),
+    );
+    const neededDuration = Math.max(
+      this.level.audio.durationSec,
+      Math.ceil(maxNewTime + 4),
+    );
+
+    this.level = {
+      ...this.level,
+      audio:
+        neededDuration > this.level.audio.durationSec
+          ? { ...this.level.audio, durationSec: neededDuration }
+          : this.level.audio,
+      objects: [...this.level.objects, ...created].sort((a, b) => a.timeSec - b.timeSec),
+    };
+    this.selectedIds = new Set(created.map((c) => c.id));
+    return created;
+  }
+
   public alignSelected(mode: 'snap_beat' | 'center_x' | 'same_time' | 'mirror_x'): void {
     if (this.selectedIds.size === 0) return;
     const selected = this.level.objects.filter((o) => this.selectedIds.has(o.id));
@@ -313,6 +622,17 @@ export class CreatorEditor {
       : this.level.objects;
     this.level = { ...this.level, groups, objects };
     return created.id;
+  }
+
+  public ungroupSelected(): void {
+    if (this.selectedIds.size === 0) return;
+    this.pushUndo();
+    this.level = {
+      ...this.level,
+      objects: this.level.objects.map((o) =>
+        this.selectedIds.has(o.id) ? { ...o, groupIds: [1] } : o,
+      ),
+    };
   }
 
   public assignGroupToSelected(groupId: number): void {
@@ -387,8 +707,7 @@ export class CreatorEditor {
   }
 
   /**
-   * Optional Auto-Pattern Assistant: generates editable CreatorObject notes & section markers
-   * from an analyzed MusicProfile so creators can refine/overwrite anything manually.
+   * Optional Auto-Pattern Assistant: generates editable Casilla objects from a MusicProfile.
    */
   public applyAutoPatternFromMusicProfile(
     profile: MusicProfile,
@@ -403,19 +722,26 @@ export class CreatorEditor {
     );
     const generated = generateProceduralLevel(profile, cfg);
 
+    const squareItem = CREATOR_BUILD_ITEMS.find((i) => i.id === 'casilla_square')!;
+    const longItem = CREATOR_BUILD_ITEMS.find((i) => i.id === 'casilla_long')!;
+    const flickItem = CREATOR_BUILD_ITEMS.find((i) => i.id === 'casilla_flick')!;
+    const slideItem = CREATOR_BUILD_ITEMS.find((i) => i.id === 'casilla_slide')!;
+
     const createdNotes: CreatorObject[] = generated.notes.map((n) => {
-      const objType: CreatorObjectType =
+      const item =
         n.kind === 'hold'
-          ? 'note_hold'
+          ? longItem
           : n.kind === 'flick'
-            ? 'note_flick'
+            ? flickItem
             : n.kind === 'slide'
-              ? 'note_slide'
-              : 'note_tap';
-      const obj = createObjectFromTemplate(objType, {
+              ? slideItem
+              : squareItem;
+      const obj = createObjectFromBuildItem(item, {
         timeSec: n.time,
         lane: n.lane,
         laneCount: options.laneCount,
+        primaryPaletteColor: this.level.audio.palette.primary,
+        secondaryPaletteColor: this.level.audio.palette.secondary,
       });
       if (obj.noteData) {
         obj.noteData.durationSec = n.durationSec ?? 0;

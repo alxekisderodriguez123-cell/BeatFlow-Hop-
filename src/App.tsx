@@ -979,6 +979,8 @@ export default function App() {
           initialLevel={creatorInitialLevel}
           initialLaunchPlaytest={creatorAutoPlaytest}
           deviceQuality={settings.graphicsQuality}
+          gameSettings={settings}
+          scene={sceneRef.current}
           onBack={() => {
             audioEngine.playUiTick();
             setCreatorInitialLevel(null);

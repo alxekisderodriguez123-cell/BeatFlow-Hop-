@@ -38,6 +38,7 @@ import {
 } from './environments/sharedTextures';
 import { resolveNoteColor } from './noteColorPalette';
 import { MusicReactiveLighting } from './MusicReactiveLighting';
+import { casillaShapeToConcreteShape } from '../creator/ObjectLibrary';
 
 export const HIT_LINE_Z = 1.6;
 export const SPAWN_Z = -48;
@@ -48,6 +49,8 @@ const _quat = new THREE.Quaternion();
 const _scale = new THREE.Vector3();
 const _color = new THREE.Color();
 const _tmpColor = new THREE.Color();
+const _customColorA = new THREE.Color();
+const _customColorB = new THREE.Color();
 const _missColor = new THREE.Color(0xef4444);
 const _slideCompleteColor = new THREE.Color(0x34d399);
 const _victoryGoldColor = new THREE.Color(0xfbbf24);
@@ -584,6 +587,31 @@ export class BeatflowScene {
   private lastHudPush = 0;
   private currentSection: MusicalSectionType = 'groove';
   private prevSection: MusicalSectionType = 'groove';
+
+  // Isolated Creator Playtest & 2.5D/3D Preview state (strictly disabled in Classic Mode)
+  private creatorPlaytestActive = false;
+  private creatorVirtualClockEnabled = false;
+  private creatorVirtualTimeSec = 0;
+  private creatorVirtualDurationSec = 40;
+  private creatorSpeedScale = 1.0;
+  private creatorVisualOnly = false;
+  private creatorCameraOverride: {
+    fovDelta: number;
+    offsetX: number;
+    offsetY: number;
+    offsetZ: number;
+    rollRad: number;
+    shake: number;
+  } | null = null;
+  private creatorEffectsOverride: {
+    bloomDelta: number;
+    exposureDelta: number;
+    bgTheme?: EnvironmentTheme;
+    bgPrimary?: string;
+    bgSecondary?: string;
+    bgBrightness?: number;
+  } | null = null;
+  private creatorAppliedBgTheme: EnvironmentTheme | null = null;
 
   constructor(container: HTMLElement, initialSettings: GameSettings) {
     this.container = container;
@@ -1758,16 +1786,115 @@ export class BeatflowScene {
     this.hihatPulse = 0;
     this.prevSection = 'groove';
     this.currentSection = 'groove';
+    this.creatorPlaytestActive = false;
+    this.creatorVirtualClockEnabled = false;
+    this.creatorVirtualTimeSec = 0;
+    this.creatorSpeedScale = 1.0;
+    this.creatorVisualOnly = false;
+    this.creatorCameraOverride = null;
+    this.creatorEffectsOverride = null;
+    this.creatorAppliedBgTheme = null;
     this.isMenuMode = false;
     this.mode = 'playing';
     this.cameraRig.triggerGameplayIntro();
     this.resetPooledTrackEffects();
 
+    const defaultGeos = this.noteGeoCache[this.currentShape];
     for (const slot of this.notePool) {
       slot.active = false;
       slot.noteId = -1;
       slot.group.visible = false;
+      slot.coreMesh.geometry = defaultGeos.core;
+      slot.trimMesh.geometry = defaultGeos.trim;
+      (slot.trimMesh.material as THREE.MeshStandardMaterial).wireframe =
+        this.currentShape === 'diamond';
     }
+  }
+
+  public startCreatorPlaytest(
+    level: GeneratedLevel,
+    palette: SongPalette,
+    callbacks: GameplayCallbacks,
+    options: {
+      profile?: MusicProfile;
+      environmentOverride?: EnvironmentTheme;
+      useVirtualClock?: boolean;
+      startTimeSec?: number;
+      durationSec?: number;
+      speedScale?: number;
+      visualOnly?: boolean;
+    },
+  ): void {
+    this.startLevel(level, palette, callbacks, options.profile, options.environmentOverride);
+    this.creatorPlaytestActive = true;
+    this.creatorVirtualClockEnabled = Boolean(options.useVirtualClock);
+    this.creatorVirtualTimeSec = Math.max(0, options.startTimeSec ?? 0);
+    this.creatorVirtualDurationSec = Math.max(10, options.durationSec ?? 40);
+    this.creatorSpeedScale = Math.max(0.25, Math.min(2.0, options.speedScale ?? 1.0));
+    this.creatorVisualOnly = Boolean(options.visualOnly);
+    this.creatorAppliedBgTheme = options.environmentOverride ?? null;
+
+    if (this.creatorVirtualTimeSec > 0.1) {
+      for (const n of level.notes) {
+        if (n.time < this.creatorVirtualTimeSec - 0.1) {
+          n.hit = true;
+        } else {
+          break;
+        }
+      }
+    }
+  }
+
+  public setCreatorPlaytestRuntime(params: {
+    cameraOverride?: {
+      fovDelta: number;
+      offsetX: number;
+      offsetY: number;
+      offsetZ: number;
+      rollRad: number;
+      shake: number;
+    } | null;
+    effectsOverride?: {
+      bloomDelta: number;
+      exposureDelta: number;
+      bgTheme?: EnvironmentTheme;
+      bgPrimary?: string;
+      bgSecondary?: string;
+      bgBrightness?: number;
+    } | null;
+    speedScale?: number;
+    visualOnly?: boolean;
+  }): void {
+    if (!this.creatorPlaytestActive) return;
+    if (params.cameraOverride !== undefined) this.creatorCameraOverride = params.cameraOverride;
+    if (params.effectsOverride !== undefined) {
+      this.creatorEffectsOverride = params.effectsOverride;
+      const targetTheme = params.effectsOverride?.bgTheme;
+      if (targetTheme && targetTheme !== this.creatorAppliedBgTheme) {
+        this.creatorAppliedBgTheme = targetTheme;
+        this.setEnvironment(targetTheme, this.currentEnvSeed);
+      }
+      if (params.effectsOverride?.bgPrimary || params.effectsOverride?.bgSecondary) {
+        this.setPalette({
+          primary: params.effectsOverride.bgPrimary || this.baseSongPalette.primary,
+          secondary: params.effectsOverride.bgSecondary || this.baseSongPalette.secondary,
+          accent: this.baseSongPalette.accent,
+        });
+      }
+    }
+    if (params.speedScale !== undefined) {
+      this.creatorSpeedScale = Math.max(0.25, Math.min(2.0, params.speedScale));
+    }
+    if (params.visualOnly !== undefined) {
+      this.creatorVisualOnly = params.visualOnly;
+    }
+  }
+
+  private getGameplayCurrentTime(): number {
+    if (this.creatorPlaytestActive && this.creatorVirtualClockEnabled) {
+      return this.creatorVirtualTimeSec;
+    }
+    return audioEngine.getCurrentTime();
   }
 
   public setMenuMode(active: boolean): void {
@@ -1812,16 +1939,29 @@ export class BeatflowScene {
     if (mode === 'idle') {
       this.activeLevel = null;
       this.activeProfile = null;
+      this.creatorPlaytestActive = false;
+      this.creatorVirtualClockEnabled = false;
+      this.creatorVirtualTimeSec = 0;
+      this.creatorCameraOverride = null;
+      this.creatorEffectsOverride = null;
+      this.creatorAppliedBgTheme = null;
       this.activeHolds.clear();
       this.activeSlides.clear();
       this.heldLanes.fill(false);
       this.feverActive = false;
       this.feverCharge = 0;
       this.resetPooledTrackEffects();
+      const defaultGeos = this.noteGeoCache[this.currentShape];
       for (const slot of this.notePool) {
         slot.active = false;
         slot.group.visible = false;
+        slot.coreMesh.geometry = defaultGeos.core;
+        slot.trimMesh.geometry = defaultGeos.trim;
+        (slot.trimMesh.material as THREE.MeshStandardMaterial).wireframe =
+          this.currentShape === 'diamond';
       }
+      this.syncBloomSettings();
+      this.renderer.toneMappingExposure = 0.88 * this.getEffectiveBrightness();
     }
   }
 
@@ -1949,23 +2089,46 @@ export class BeatflowScene {
 
     const laneXPos = this.trackLayout.laneX[note.lane] ?? 0;
     const laneCol = this.getNoteDisplayColor(note);
-    const burstCount =
-      note.patternTag === 'burst'
-        ? judgment === 'perfect'
-          ? 20
-          : 14
-        : judgment === 'perfect'
-          ? 14
-          : 10;
-    this.spawnBurst(laneXPos, 0.3, HIT_LINE_Z, laneCol, burstCount, false);
+    const hitStyle = note.customHitExplosion ?? 'sparks';
 
-    // Localized impact flare & expanding circular shockwave
-    this.spawnHitShockwave(
-      laneXPos,
-      laneCol,
-      judgment === 'perfect' ? 3.8 : 2.9,
-      judgment === 'perfect' ? 0.56 : 0.4,
-    );
+    if (hitStyle !== 'none') {
+      const burstCount =
+        hitStyle === 'ring'
+          ? 3
+          : hitStyle === 'burst'
+            ? 22
+            : hitStyle === 'neon_flame'
+              ? 16
+              : note.patternTag === 'burst'
+                ? judgment === 'perfect'
+                  ? 20
+                  : 14
+                : judgment === 'perfect'
+                  ? 14
+                  : 10;
+      this.spawnBurst(laneXPos, 0.3, HIT_LINE_Z, laneCol, burstCount, false);
+
+      this.spawnHitShockwave(
+        laneXPos,
+        laneCol,
+        hitStyle === 'ring' || hitStyle === 'shockwave'
+          ? 4.4
+          : judgment === 'perfect'
+            ? 3.8
+            : 2.9,
+        hitStyle === 'ring'
+          ? 0.22
+          : hitStyle === 'neon_flame'
+            ? 0.72
+            : judgment === 'perfect'
+              ? 0.56
+              : 0.4,
+      );
+
+      if (hitStyle === 'burst') {
+        this.spawnSurfaceWave(laneCol, -32, 0.22);
+      }
+    }
 
     // Longitudinal pulse travelling up the struck lane
     this.spawnLanePulse(
@@ -2052,7 +2215,7 @@ export class BeatflowScene {
 
     if (this.mode !== 'playing' || !this.activeLevel) return;
 
-    const currentTime = audioEngine.getCurrentTime();
+    const currentTime = this.getGameplayCurrentTime();
     let bestNote: LevelNote | null = null;
     let bestAbsDiff = Infinity;
     let bestWindow = this.activeLevel.hitWindowSec;
@@ -2114,7 +2277,7 @@ export class BeatflowScene {
     this.heldLanes[lane] = false;
 
     if (this.mode !== 'playing' || !this.activeLevel) return;
-    const currentTime = audioEngine.getCurrentTime();
+    const currentTime = this.getGameplayCurrentTime();
     const earlyPenalty = this.settings.generationConfig.mechanics.earlyReleasePenalty;
 
     for (const [id, hold] of this.activeHolds.entries()) {
@@ -2162,7 +2325,7 @@ export class BeatflowScene {
     this.laneFlash[lane] = 1.0;
 
     if (this.mode !== 'playing' || !this.activeLevel) return;
-    const currentTime = audioEngine.getCurrentTime();
+    const currentTime = this.getGameplayCurrentTime();
 
     let bestNote: LevelNote | null = null;
     let bestAbsDiff = Infinity;
@@ -2238,6 +2401,21 @@ export class BeatflowScene {
   private getNoteDisplayColor(note: LevelNote): THREE.Color {
     if (this.feverActive) {
       return note.lane % 2 === 0 ? _feverColorA : _feverColorB;
+    }
+    if (note.customColor) {
+      _customColorA.set(note.customColor);
+      if (note.customSecondaryColor && note.customColorComboMode && note.customColorComboMode !== 'solid') {
+        _customColorB.set(note.customSecondaryColor);
+        if (note.customColorComboMode === 'alternating') {
+          return note.id % 2 === 0 ? _customColorA : _customColorB;
+        }
+        if (note.customColorComboMode === 'gradient') {
+          const blend = 0.5 + 0.5 * Math.sin(this.clock.elapsedTime * 3.2 + note.id * 0.6);
+          return _customColorA.lerp(_customColorB, blend);
+        }
+        return _customColorA.lerp(_customColorB, note.lane % 2 === 0 ? 0.25 : 0.75);
+      }
+      return _customColorA;
     }
     const worldTheme = this.envManager?.getCurrentTheme() ?? 'cyberpunk';
     return resolveNoteColor(
@@ -2570,6 +2748,10 @@ export class BeatflowScene {
     const menuVisualMult =
       menuCfg?.visualIntensity === 'low' ? 0.55 : menuCfg?.visualIntensity === 'high' ? 1.18 : 0.88;
 
+    if (this.creatorPlaytestActive && this.creatorVirtualClockEnabled && this.mode === 'playing') {
+      this.creatorVirtualTimeSec += dt * this.creatorSpeedScale;
+    }
+
     const rawMenuBands =
       this.mode === 'idle' ? menuAmbientAudio.getAmbientBands(this.clock.elapsedTime) : null;
 
@@ -2586,7 +2768,25 @@ export class BeatflowScene {
           currentTime: 0,
           isPlaying: false,
         }
-      : audioEngine.getRealtimeAudioState(audioCfg?.frequencySensitivity ?? 1.0);
+      : this.creatorPlaytestActive && this.creatorVirtualClockEnabled
+        ? (() => {
+            const bpm = this.activeLevel?.bpm ?? 124;
+            const phase = ((this.creatorVirtualTimeSec * bpm) / 60) % 1;
+            const kick = phase < 0.16 ? 0.78 : 0.18;
+            return {
+              subBass: kick,
+              bass: kick * 0.9,
+              lowMid: 0.28,
+              mid: 0.34,
+              highMid: phase > 0.45 && phase < 0.65 ? 0.62 : 0.2,
+              treble: 0.24,
+              high: 0.28,
+              energy: 0.32 + kick * 0.35,
+              currentTime: this.creatorVirtualTimeSec,
+              isPlaying: this.mode === 'playing',
+            };
+          })()
+        : audioEngine.getRealtimeAudioState(audioCfg?.frequencySensitivity ?? 1.0);
 
     const reactive = this.settings.reactiveVisuals;
     const reactMult = audioCfg?.reactionIntensity ?? 1.0;
@@ -3133,6 +3333,37 @@ export class BeatflowScene {
       menuAnimationsEnabled: this.settings.menuAmbientConfig?.menuAnimationsEnabled !== false,
     });
 
+    // Apply Creator trigger Camera FX / EffectController runtime deltas (isolated to Creator Playtest)
+    if (this.creatorPlaytestActive) {
+      if (this.creatorCameraOverride) {
+        const co = this.creatorCameraOverride;
+        const targetFov = THREE.MathUtils.clamp(this.cameraRig.camera.fov + co.fovDelta, 40, 102);
+        if (Math.abs(this.cameraRig.camera.fov - targetFov) > 0.01) {
+          this.cameraRig.camera.fov = targetFov;
+          this.cameraRig.camera.updateProjectionMatrix();
+        }
+        const shakeX =
+          co.shake > 0.01 ? Math.sin(this.clock.elapsedTime * 52) * 0.14 * co.shake : 0;
+        const shakeY =
+          co.shake > 0.01 ? Math.cos(this.clock.elapsedTime * 61) * 0.1 * co.shake : 0;
+        this.cameraRig.camera.position.x += co.offsetX + shakeX;
+        this.cameraRig.camera.position.y += co.offsetY + shakeY;
+        this.cameraRig.camera.position.z += co.offsetZ;
+        this.cameraRig.camera.rotation.z += co.rollRad;
+      }
+      if (this.creatorEffectsOverride) {
+        const eo = this.creatorEffectsOverride;
+        if (this.bloomPass) {
+          this.bloomPass.strength = THREE.MathUtils.clamp(0.28 + eo.bloomDelta, 0.05, 1.15);
+        }
+        this.renderer.toneMappingExposure = THREE.MathUtils.clamp(
+          0.88 * this.getEffectiveBrightness() * (eo.bgBrightness ?? 1) + eo.exposureDelta,
+          0.35,
+          1.75,
+        );
+      }
+    }
+
     // Update burst particles (bounded by pool size)
     let dirtyParticles = false;
     for (let i = 0; i < this.MAX_BURST_PARTICLES; i++) {
@@ -3162,9 +3393,10 @@ export class BeatflowScene {
 
     // Synchronized gameplay notes + active Holds/Slides
     if (this.mode === 'playing' && this.activeLevel) {
-      this.updateActiveHolds(audioState.currentTime);
-      this.updateActiveSlides(audioState.currentTime, dt);
-      this.updateActiveNotes(audioState.currentTime);
+      const playTime = this.getGameplayCurrentTime();
+      this.updateActiveHolds(playTime);
+      this.updateActiveSlides(playTime, dt);
+      this.updateActiveNotes(playTime);
     } else if (this.slideCursorMesh.visible) {
       this.slideCursorMesh.visible = false;
     }
@@ -3351,6 +3583,14 @@ export class BeatflowScene {
       const hw = this.getNoteHitWindow(note);
       const timeUntilHit = note.time - currentTime;
 
+      // Visual-only Creator Preview: auto-showcase note hit right at the hit line
+      if (this.creatorPlaytestActive && this.creatorVisualOnly && !note.hit && timeUntilHit <= 0) {
+        note.hit = true;
+        this.laneFlash[note.lane] = 0.85;
+        this.applySuccessHit(note, 0, hw, 1.0, '');
+        continue;
+      }
+
       if (!note.hit && timeUntilHit < -hw) {
         this.registerMiss(note);
         if (this.mode !== 'playing') return;
@@ -3371,6 +3611,16 @@ export class BeatflowScene {
       slot.noteId = note.id;
       slot.group.visible = true;
 
+      const noteShape = note.customCasillaShape
+        ? casillaShapeToConcreteShape(note.customCasillaShape)
+        : this.currentShape;
+      const geos = this.noteGeoCache[noteShape] ?? this.noteGeoCache[this.currentShape];
+      if (slot.coreMesh.geometry !== geos.core) {
+        slot.coreMesh.geometry = geos.core;
+        slot.trimMesh.geometry = geos.trim;
+      }
+      (slot.trimMesh.material as THREE.MeshStandardMaterial).wireframe = noteShape === 'diamond';
+
       const laneX = this.trackLayout.laneX[note.lane] ?? 0;
       const sx = this.trackLayout.noteScaleX;
       const floatY = 0.21 + Math.sin(currentTime * 4.2 + note.id * 0.7) * 0.02;
@@ -3379,21 +3629,21 @@ export class BeatflowScene {
       slot.coreMesh.scale.set(sx, 1, 1);
       slot.trimMesh.scale.set(sx, 1, 1);
       slot.topRingMesh.scale.set(
-        this.currentShape === 'square' ? sx * 0.88 : sx,
-        this.currentShape === 'square' ? 1.2 : 1,
+        noteShape === 'square' ? sx * 0.88 : sx,
+        noteShape === 'square' ? 1.2 : 1,
         1,
       );
       slot.topRingMesh.visible =
-        this.currentShape === 'tile' ||
-        this.currentShape === 'square' ||
-        this.currentShape === 'disc' ||
-        this.currentShape === 'hexagon';
+        noteShape === 'tile' ||
+        noteShape === 'square' ||
+        noteShape === 'disc' ||
+        noteShape === 'hexagon';
       slot.reflectionMesh.scale.set(sx, 1, 1);
 
-      if (this.currentShape === 'diamond' || this.currentShape === 'prism') {
+      if (noteShape === 'diamond' || noteShape === 'prism') {
         slot.coreMesh.rotation.y = (currentTime * 1.9 + note.id * 0.7) % (Math.PI * 2);
         slot.trimMesh.rotation.y = slot.coreMesh.rotation.y;
-      } else if (this.currentShape === 'sphere') {
+      } else if (noteShape === 'sphere') {
         slot.coreMesh.rotation.y = 0;
         slot.trimMesh.rotation.z = (currentTime * 2.5 + note.id * 0.5) % (Math.PI * 2);
       } else {
@@ -3517,7 +3767,9 @@ export class BeatflowScene {
 
       this.callbacks?.onProgress({
         currentTime,
-        duration: audioEngine.getDuration(),
+        duration: this.creatorPlaytestActive
+          ? Math.max(audioEngine.getDuration() || 0, this.creatorVirtualDurationSec)
+          : audioEngine.getDuration(),
         score: this.score,
         combo: this.combo,
         maxCombo: this.maxCombo,
