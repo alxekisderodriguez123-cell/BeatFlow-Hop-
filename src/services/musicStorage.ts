@@ -3,7 +3,7 @@ import {
   extractPaletteFromCoverArt,
   parseMp3Id3Tags,
 } from './id3Parser';
-import type { MusicProfile, SongMetadata } from '../types/game';
+import type { MusicProfile, SongMetadata, SongPalette } from '../types/game';
 
 const DB_NAME = 'BeatflowHopLibraryDB';
 const DB_VERSION = 1;
@@ -57,6 +57,45 @@ export async function getSongBlob(songId: string): Promise<Blob | null> {
       resolve(rec?.blob ?? null);
     };
     req.onerror = () => reject(req.error);
+  });
+}
+
+export async function getSongMetadataById(songId: string): Promise<SongMetadata | null> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_META, 'readonly');
+    const req = tx.objectStore(STORE_META).get(songId);
+    req.onsuccess = () => {
+      resolve((req.result as SongMetadata | undefined) ?? null);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function getSongPackageData(
+  songId: string,
+): Promise<{ blob: Blob; metadata: SongMetadata | null } | null> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE_META, STORE_BLOBS], 'readonly');
+    const metaReq = tx.objectStore(STORE_META).get(songId);
+    const blobReq = tx.objectStore(STORE_BLOBS).get(songId);
+    let meta: SongMetadata | null = null;
+    let blob: Blob | null = null;
+    metaReq.onsuccess = () => {
+      meta = (metaReq.result as SongMetadata | undefined) ?? null;
+    };
+    blobReq.onsuccess = () => {
+      blob = (blobReq.result as StoredBlobRecord | undefined)?.blob ?? null;
+    };
+    tx.oncomplete = () => {
+      if (!blob) {
+        resolve(null);
+        return;
+      }
+      resolve({ blob, metadata: meta });
+    };
+    tx.onerror = () => reject(tx.error);
   });
 }
 
@@ -121,6 +160,9 @@ export async function removeSongFromLibrary(songId: string): Promise<void> {
 }
 
 async function measureAudioDuration(blob: Blob): Promise<number> {
+  if (typeof Audio === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    return 0;
+  }
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
     const audio = new Audio();
@@ -139,6 +181,90 @@ async function measureAudioDuration(blob: Blob): Promise<number> {
     };
     audio.src = url;
   });
+}
+
+async function createContentSongId(bytes: ArrayBuffer, fileName: string): Promise<string> {
+  const sizeStr = bytes.byteLength.toString(36);
+  if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function') {
+    try {
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const arr = new Uint8Array(digest);
+      let hex = '';
+      for (let i = 0; i < 12; i++) {
+        hex += arr[i].toString(16).padStart(2, '0');
+      }
+      return `song_${hex}_${sizeStr}`;
+    } catch {
+      // Fallback below
+    }
+  }
+  const view = new Uint8Array(bytes);
+  let hash = 2166136261;
+  const step = Math.max(1, Math.floor(view.length / 4096));
+  for (let i = 0; i < view.length; i += step) {
+    hash ^= view[i];
+    hash = Math.imul(hash, 16777619);
+  }
+  for (let i = 0; i < fileName.length; i++) {
+    hash ^= fileName.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `song_${(hash >>> 0).toString(36)}_${sizeStr}`;
+}
+
+export async function importAudioBlobToLibrary(params: {
+  blob: Blob;
+  fileName: string;
+  mimeType?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  durationSec?: number;
+  palette?: SongPalette;
+}): Promise<SongMetadata> {
+  const arrayBuffer = await params.blob.arrayBuffer();
+  const id = await createContentSongId(arrayBuffer, params.fileName);
+
+  const existingMeta = await getSongMetadataById(id);
+  const existingBlob = existingMeta ? await getSongBlob(id) : null;
+  if (existingMeta && existingBlob && existingBlob.size === params.blob.size) {
+    return existingMeta;
+  }
+
+  const mime = params.mimeType || params.blob.type || 'audio/mpeg';
+  const storedBlob = new Blob([arrayBuffer], { type: mime });
+  const id3 = parseMp3Id3Tags(arrayBuffer);
+  const fallback = cleanTrackNameFromFilename(params.fileName);
+  const measured = await measureAudioDuration(storedBlob);
+  const duration = measured > 0 ? measured : Math.max(0, params.durationSec ?? 0);
+  const palette =
+    params.palette ??
+    (await extractPaletteFromCoverArt(id3.coverArtDataUrl));
+
+  const metadata: SongMetadata = {
+    id,
+    title: params.title?.trim() || id3.title || fallback.title,
+    artist: params.artist?.trim() || id3.artist || fallback.artist,
+    album: params.album?.trim() || id3.album || '',
+    fileName: params.fileName,
+    fileSize: storedBlob.size,
+    duration,
+    coverArtDataUrl: id3.coverArtDataUrl,
+    palette,
+    addedAt: Date.now(),
+    isFavorite: false,
+  };
+
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction([STORE_META, STORE_BLOBS], 'readwrite');
+    tx.objectStore(STORE_META).put(metadata);
+    tx.objectStore(STORE_BLOBS).put({ id, blob: storedBlob });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  return metadata;
 }
 
 function createSongId(file: File): string {

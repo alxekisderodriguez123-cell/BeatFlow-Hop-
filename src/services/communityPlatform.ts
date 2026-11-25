@@ -9,7 +9,7 @@ import type {
 import type { DifficultyLevel } from '../types/game';
 import { migrateLevelDocument } from '../creator/LevelSerializer';
 import { validateLevelDocument } from '../creator/LevelValidator';
-import { loadSavedCreatorLevels } from './creatorLevelsStorage';
+import { getStarterCreatorTemplates } from './creatorLevelsStorage';
 
 const COMMUNITY_MUSIC_KEY = 'beatflow_xanderai_music_v1';
 const COMMUNITY_LEVELS_KEY = 'beatflow_xanderai_levels_v1';
@@ -165,7 +165,7 @@ export function validateAudioRightsDeclaration(
 }
 
 function buildInitialCommunityLevels(): CommunityLevelEntry[] {
-  const starters = loadSavedCreatorLevels();
+  const starters = getStarterCreatorTemplates();
   return starters.map((lvl, idx) => ({
     id: `comm-${lvl.levelId}`,
     level: lvl,

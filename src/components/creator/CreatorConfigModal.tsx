@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Check,
+  Copy,
   Download,
   Eye,
   FolderOpen,
   Globe,
   Music,
+  Pencil,
   Plus,
   Sparkles,
   Trash2,
@@ -20,6 +23,8 @@ interface CreatorConfigModalProps {
   open: boolean;
   level: BeatflowLevelDocument;
   savedLevels: BeatflowLevelDocument[];
+  loadingLevels?: boolean;
+  zipBusy?: boolean;
   playbackVolume: number;
   hasLinkedAudio: boolean;
   onClose: () => void;
@@ -27,11 +32,13 @@ interface CreatorConfigModalProps {
   onChangeVolume: (vol: number) => void;
   onSelectLocalSong: (song: SongMetadata, autoGenerateBase: boolean) => Promise<void>;
   onLaunchVisualPreview: () => void;
-  onOpenLevel: (lvl: BeatflowLevelDocument) => void;
-  onNewEmptyLevel: () => void;
-  onDeleteSavedLevel: (levelId: string) => void;
-  onExportBfn: () => void;
-  onImportBfnFile: (file: File) => void;
+  onOpenLevel: (lvl: BeatflowLevelDocument) => void | Promise<void>;
+  onNewEmptyLevel: () => void | Promise<void>;
+  onDuplicateLevel: (lvl: BeatflowLevelDocument) => void | Promise<void>;
+  onRenameLevel: (levelId: string, newName: string) => void | Promise<void>;
+  onDeleteSavedLevel: (levelId: string) => void | Promise<void>;
+  onExportZip: (targetLevel?: BeatflowLevelDocument) => void | Promise<void>;
+  onImportZipFile: (file: File) => void | Promise<void>;
   onOpenPublishModal: () => void;
   onOpenCommunity?: () => void;
 }
@@ -49,6 +56,8 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
   open,
   level,
   savedLevels,
+  loadingLevels = false,
+  zipBusy = false,
   playbackVolume,
   hasLinkedAudio,
   onClose,
@@ -58,9 +67,11 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
   onLaunchVisualPreview,
   onOpenLevel,
   onNewEmptyLevel,
+  onDuplicateLevel,
+  onRenameLevel,
   onDeleteSavedLevel,
-  onExportBfn,
-  onImportBfnFile,
+  onExportZip,
+  onImportZipFile,
   onOpenPublishModal,
   onOpenCommunity,
 }) => {
@@ -69,8 +80,11 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
   const [importingAudio, setImportingAudio] = useState(false);
   const [autoGenAfterPick, setAutoGenAfterPick] = useState(false);
   const [sectionTab, setSectionTab] = useState<'general' | 'audio' | 'levels'>('general');
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
-  const bfnInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -120,7 +134,7 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
           <div>
             <h2 className="font-display font-bold text-base text-white">Configuración del Nivel</h2>
             <p className="text-[11px] text-slate-400">
-              Metadatos, audio local, BPM, carriles y archivo .bfn
+              Metadatos, audio local, BPM, carriles y paquetes .zip
             </p>
           </div>
           <button
@@ -139,7 +153,7 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
             [
               { id: 'general', label: 'Nivel & Pista' },
               { id: 'audio', label: 'Música & Sync' },
-              { id: 'levels', label: 'Niveles / .bfn' },
+              { id: 'levels', label: 'Niveles / .zip' },
             ] as const
           ).map((tab) => (
             <button
@@ -473,7 +487,7 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    onNewEmptyLevel();
+                    void onNewEmptyLevel();
                     onClose();
                   }}
                   className="min-h-[46px] flex items-center justify-center gap-1.5 rounded-xl bg-cyan-500/20 border border-cyan-400/45 text-cyan-100 font-bold cursor-pointer"
@@ -494,28 +508,30 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={onExportBfn}
-                  className="min-h-[46px] flex items-center justify-center gap-1.5 rounded-xl bg-white/5 border border-white/15 text-slate-100 font-bold cursor-pointer"
+                  disabled={zipBusy}
+                  onClick={() => void onExportZip(level)}
+                  className="min-h-[46px] flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500/15 border border-emerald-400/40 text-emerald-100 font-bold cursor-pointer disabled:opacity-50"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Exportar .bfn</span>
+                  <span>{zipBusy ? 'Procesando...' : 'Exportar ZIP'}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => bfnInputRef.current?.click()}
-                  className="min-h-[46px] flex items-center justify-center gap-1.5 rounded-xl bg-white/5 border border-white/15 text-slate-100 font-bold cursor-pointer"
+                  disabled={zipBusy}
+                  onClick={() => zipInputRef.current?.click()}
+                  className="min-h-[46px] flex items-center justify-center gap-1.5 rounded-xl bg-white/5 border border-white/15 text-slate-100 font-bold cursor-pointer disabled:opacity-50"
                 >
                   <Upload className="w-4 h-4" />
-                  <span>Importar .bfn</span>
+                  <span>{zipBusy ? 'Procesando...' : 'Importar ZIP'}</span>
                 </button>
                 <input
-                  ref={bfnInputRef}
+                  ref={zipInputRef}
                   type="file"
-                  accept=".bfn,.json"
+                  accept=".zip,application/zip,application/x-zip-compressed"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) onImportBfnFile(f);
+                    if (f) void onImportZipFile(f);
                     e.target.value = '';
                   }}
                 />
@@ -536,52 +552,179 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
               )}
 
               <div className="space-y-2 pt-2 border-t border-white/10">
-                <div className="flex items-center gap-1.5 font-bold text-slate-200">
-                  <FolderOpen className="w-4 h-4 text-cyan-300" />
-                  <span>Niveles Locales Guardados ({savedLevels.length})</span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-200">
+                    <FolderOpen className="w-4 h-4 text-cyan-300" />
+                    <span>Niveles Independientes ({savedLevels.length})</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">IndexedDB local</span>
                 </div>
-                <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
-                  {savedLevels.map((lvl) => {
-                    const isCurrent = lvl.levelId === level.levelId;
-                    return (
-                      <div
-                        key={lvl.levelId}
-                        className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border ${
-                          isCurrent
-                            ? 'bg-cyan-500/15 border-cyan-400/50'
-                            : 'bg-[#0b122b] border-white/10'
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <div className="font-bold text-white truncate">{lvl.levelName}</div>
-                          <div className="text-[11px] text-slate-400 tabular-nums">
-                            {lvl.environmentTheme} · {Math.round(lvl.audio.bpm)} BPM · {lvl.objects.length} obj
+
+                {loadingLevels ? (
+                  <div className="py-6 text-center text-slate-400">Cargando niveles...</div>
+                ) : savedLevels.length === 0 ? (
+                  <div className="py-6 text-center text-slate-400 bg-black/25 rounded-xl border border-white/10">
+                    No hay niveles guardados todavía. Crea uno nuevo o importa un paquete .zip.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {savedLevels.map((lvl) => {
+                      const isCurrent = lvl.levelId === level.levelId;
+                      const isRenaming = renamingId === lvl.levelId;
+                      const isConfirmingDelete = confirmDeleteId === lvl.levelId;
+
+                      return (
+                        <div
+                          key={lvl.levelId}
+                          className={`rounded-xl border p-2.5 space-y-2 ${
+                            isCurrent
+                              ? 'bg-cyan-500/15 border-cyan-400/55'
+                              : 'bg-[#0b122b] border-white/10'
+                          }`}
+                        >
+                          {isRenaming ? (
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                const trimmed = renameDraft.trim();
+                                if (trimmed) {
+                                  void onRenameLevel(lvl.levelId, trimmed);
+                                }
+                                setRenamingId(null);
+                              }}
+                              className="flex items-center gap-1.5"
+                            >
+                              <input
+                                type="text"
+                                autoFocus
+                                maxLength={64}
+                                value={renameDraft}
+                                onChange={(e) => setRenameDraft(e.target.value)}
+                                aria-label="Nuevo nombre del nivel"
+                                className="flex-1 min-h-[38px] bg-black/50 border border-cyan-400/60 rounded-lg px-2.5 text-xs text-white outline-none"
+                              />
+                              <button
+                                type="submit"
+                                className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg bg-emerald-500/25 border border-emerald-400/50 text-emerald-200 cursor-pointer"
+                                aria-label="Guardar nombre"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRenamingId(null)}
+                                className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg bg-white/5 border border-white/15 text-slate-300 cursor-pointer"
+                                aria-label="Cancelar renombrar"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </form>
+                          ) : (
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-white truncate">
+                                    {lvl.levelName}
+                                  </span>
+                                  {isCurrent && (
+                                    <span className="px-1.5 py-0.5 rounded bg-cyan-400/20 text-cyan-200 text-[10px] font-bold shrink-0">
+                                      Activo
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-slate-400 tabular-nums truncate">
+                                  {lvl.environmentTheme} · {Math.round(lvl.audio.bpm)} BPM ·{' '}
+                                  {lvl.objects.length} obj ·{' '}
+                                  {lvl.audio.songId ? `Audio: ${lvl.audio.title}` : 'Sin audio'}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void onOpenLevel(lvl);
+                                onClose();
+                              }}
+                              className="min-h-[38px] px-3 rounded-lg bg-cyan-500/25 border border-cyan-400/45 text-cyan-100 font-bold cursor-pointer"
+                            >
+                              {isCurrent ? 'Continuar' : 'Abrir'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void onDuplicateLevel(lvl)}
+                              className="min-h-[38px] px-2.5 flex items-center gap-1 rounded-lg bg-white/5 border border-white/15 text-slate-200 font-semibold cursor-pointer"
+                              title="Duplicar nivel"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Duplicar</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setConfirmDeleteId(null);
+                                setRenamingId(lvl.levelId);
+                                setRenameDraft(lvl.levelName);
+                              }}
+                              className="min-h-[38px] px-2.5 flex items-center gap-1 rounded-lg bg-white/5 border border-white/15 text-slate-200 font-semibold cursor-pointer"
+                              title="Renombrar nivel"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              <span>Renombrar</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={zipBusy}
+                              onClick={() => void onExportZip(lvl)}
+                              className="min-h-[38px] px-2.5 flex items-center gap-1 rounded-lg bg-emerald-500/15 border border-emerald-400/35 text-emerald-200 font-semibold cursor-pointer disabled:opacity-50"
+                              title="Exportar paquete ZIP"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>ZIP</span>
+                            </button>
+
+                            {isConfirmingDelete ? (
+                              <div className="ml-auto flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setConfirmDeleteId(null);
+                                    void onDeleteSavedLevel(lvl.levelId);
+                                  }}
+                                  className="min-h-[38px] px-2.5 rounded-lg bg-rose-600 text-white font-bold cursor-pointer"
+                                >
+                                  Confirmar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="min-h-[38px] px-2 rounded-lg bg-white/5 border border-white/15 text-slate-300 cursor-pointer"
+                                >
+                                  No
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRenamingId(null);
+                                  setConfirmDeleteId(lvl.levelId);
+                                }}
+                                className="ml-auto min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg bg-rose-500/15 border border-rose-400/35 text-rose-300 cursor-pointer"
+                                title="Eliminar nivel"
+                                aria-label={`Eliminar ${lvl.levelName}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onOpenLevel(lvl);
-                              onClose();
-                            }}
-                            className="min-h-[40px] px-3 rounded-lg bg-cyan-500/25 border border-cyan-400/45 text-cyan-100 font-bold cursor-pointer"
-                          >
-                            Abrir
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onDeleteSavedLevel(lvl.levelId)}
-                            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg bg-rose-500/15 border border-rose-400/35 text-rose-300 cursor-pointer"
-                            title="Eliminar nivel"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </>
           )}

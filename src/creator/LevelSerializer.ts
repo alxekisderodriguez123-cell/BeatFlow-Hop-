@@ -64,6 +64,15 @@ export function createDefaultGameplayRules(
   };
 }
 
+export function generateUniqueLevelId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `lvl-${crypto.randomUUID()}`;
+  }
+  const randA = Math.random().toString(36).slice(2, 8);
+  const randB = Math.random().toString(36).slice(2, 8);
+  return `lvl-${Date.now().toString(36)}-${randA}${randB}`;
+}
+
 export function createEmptyLevelDocument(options: {
   levelId?: string;
   levelName?: string;
@@ -78,9 +87,7 @@ export function createEmptyLevelDocument(options: {
   songId?: string;
 } = {}): BeatflowLevelDocument {
   const nowIso = new Date().toISOString();
-  const id =
-    options.levelId ||
-    `lvl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const id = options.levelId || generateUniqueLevelId();
   const groups = GroupManager.ensureDefaultGroup([]);
 
   return {
@@ -265,15 +272,23 @@ export function collectAssetReferences(doc: BeatflowLevelDocument): string[] {
   return Array.from(refs);
 }
 
-export function serializeLevelToBfn(doc: BeatflowLevelDocument): string {
-  const prepared: BeatflowLevelDocument = {
-    ...sanitizePlainValue(doc),
+export function prepareLevelForSerialization(
+  doc: BeatflowLevelDocument,
+  options: { preserveUpdatedDate?: boolean } = {},
+): BeatflowLevelDocument {
+  const sanitized = sanitizePlainValue(structuredClone(doc));
+  const migrated = migrateLevelDocument(sanitized as unknown as Record<string, unknown>);
+  return {
+    ...migrated,
     schemaVersion: CURRENT_BFN_SCHEMA_VERSION,
     requiredGameVersion: REQUIRED_GAME_VERSION,
-    updatedDate: new Date().toISOString(),
-    assetReferences: collectAssetReferences(doc),
+    updatedDate: options.preserveUpdatedDate ? migrated.updatedDate : new Date().toISOString(),
+    assetReferences: collectAssetReferences(migrated),
   };
-  return JSON.stringify(prepared, null, 2);
+}
+
+export function serializeLevelDocumentJson(doc: BeatflowLevelDocument): string {
+  return JSON.stringify(prepareLevelForSerialization(doc, { preserveUpdatedDate: true }), null, 2);
 }
 
 export interface DeserializeResult {
@@ -282,28 +297,43 @@ export interface DeserializeResult {
   error?: string;
 }
 
-export function deserializeLevelFromBfn(jsonText: string): DeserializeResult {
+export function deserializeLevelDocumentJson(jsonText: string): DeserializeResult {
   if (!jsonText || typeof jsonText !== 'string') {
-    return { ok: false, error: 'Archivo .bfn vacío o ilegible.' };
+    return { ok: false, error: 'El documento del nivel está vacío o es ilegible.' };
   }
   if (jsonText.length > 15_000_000) {
-    return { ok: false, error: 'El archivo .bfn excede el tamaño máximo permitido (15 MB).' };
+    return { ok: false, error: 'El documento del nivel excede el tamaño máximo permitido (15 MB).' };
   }
   try {
     const parsed = JSON.parse(jsonText) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return { ok: false, error: 'Formato JSON .bfn inválido.' };
+      return { ok: false, error: 'Formato JSON del nivel inválido.' };
     }
     const record = parsed as Record<string, unknown>;
     if (!Array.isArray(record.objects)) {
-      return { ok: false, error: 'El nivel .bfn no contiene una lista válida de objetos.' };
+      return { ok: false, error: 'El nivel no contiene una lista válida de objetos.' };
+    }
+    if (typeof record.levelName !== 'string' || !record.levelName.trim()) {
+      return { ok: false, error: 'El nivel no contiene un nombre válido.' };
     }
     if (record.schemaVersion !== undefined && typeof record.schemaVersion !== 'number') {
-      return { ok: false, error: 'Versión de esquema .bfn inválida.' };
+      return { ok: false, error: 'Versión de esquema del nivel inválida.' };
+    }
+    const audioObj = record.audio as Record<string, unknown> | undefined;
+    if (audioObj !== undefined) {
+      if (typeof audioObj !== 'object' || audioObj === null || Array.isArray(audioObj)) {
+        return { ok: false, error: 'Metadatos de audio del nivel inválidos.' };
+      }
+      if (
+        audioObj.bpm !== undefined &&
+        (typeof audioObj.bpm !== 'number' || !Number.isFinite(audioObj.bpm) || audioObj.bpm < 20 || audioObj.bpm > 400)
+      ) {
+        return { ok: false, error: 'El BPM del nivel es inválido.' };
+      }
     }
     const migrated = migrateLevelDocument(record);
     return { ok: true, level: migrated };
   } catch {
-    return { ok: false, error: 'Error de sintaxis JSON al importar el archivo .bfn.' };
+    return { ok: false, error: 'Error de sintaxis JSON al leer el documento del nivel.' };
   }
 }

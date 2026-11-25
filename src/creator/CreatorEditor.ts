@@ -124,6 +124,22 @@ export class CreatorEditor {
     this.selectedIds.clear();
   }
 
+  /**
+   * Loads an independent level project, isolating undo/redo and gesture state
+   * so edits from one level never bleed into another level.
+   */
+  public loadProject(next: BeatflowLevelDocument): void {
+    this.level = structuredClone(next);
+    this.level.groups = GroupManager.ensureDefaultGroup(this.level.groups);
+    if (!this.level.viewSettings) {
+      this.level.viewSettings = createDefaultViewSettings();
+    }
+    this.selectedIds.clear();
+    this.undoStack = [];
+    this.redoStack = [];
+    this.interactiveGestureSnapshot = null;
+  }
+
   private pushUndo(): void {
     this.undoStack.push(structuredClone(this.level));
     if (this.undoStack.length > MAX_UNDO_HISTORY) {

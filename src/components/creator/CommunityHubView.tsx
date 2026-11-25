@@ -110,10 +110,10 @@ export const CommunityHubView: React.FC<CommunityHubViewProps> = ({
     onOpenInCreator(structuredClone(entry.level), true);
   };
 
-  const handleDownloadToCreator = (entry: CommunityLevelEntry) => {
+  const handleDownloadToCreator = async (entry: CommunityLevelEntry) => {
     communityPlatform.incrementStat('level', entry.id, 'downloads');
-    saveCreatorLevel(entry.level);
-    onOpenInCreator(structuredClone(entry.level), false);
+    const saved = await saveCreatorLevel(structuredClone(entry.level), { setActive: true });
+    onOpenInCreator(saved, false);
   };
 
   const handleUseMusicInCreator = (track: CommunityMusicTrack) => {
@@ -180,7 +180,7 @@ export const CommunityHubView: React.FC<CommunityHubViewProps> = ({
               Comunidad XanderAI Games
             </h1>
             <p className="text-[11px] text-cyan-300/90">
-              Niveles .bfn compartidos y Música Autorizada libre de conflictos de copyright
+              Niveles compartidos (.zip) y Música Autorizada libre de conflictos de copyright
             </p>
           </div>
         </div>

@@ -59,9 +59,14 @@ import { getSongBlob } from '../../services/musicStorage';
 import { analyzeAudioBuffer } from '../../services/audioAnalyzer';
 import { communityPlatform } from '../../services/communityPlatform';
 import {
+  createNewCreatorLevel,
   deleteCreatorLevel,
+  duplicateCreatorLevel,
+  getCreatorLevelById,
+  initCreatorLevelsStorage,
   loadActiveCreatorLevelId,
-  loadSavedCreatorLevels,
+  loadAllCreatorLevels,
+  renameCreatorLevel,
   saveActiveCreatorLevelId,
   saveCreatorLevel,
 } from '../../services/creatorLevelsStorage';
@@ -73,11 +78,11 @@ import {
   type CreatorBuildItem,
   isCasillaObject,
 } from '../../creator/ObjectLibrary';
+import { createEmptyLevelDocument } from '../../creator/LevelSerializer';
 import {
-  createEmptyLevelDocument,
-  deserializeLevelFromBfn,
-  serializeLevelToBfn,
-} from '../../creator/LevelSerializer';
+  exportLevelAsZipPackage,
+  importLevelFromZipInput,
+} from '../../creator/LevelPackageZip';
 import { validateLevelDocument } from '../../creator/LevelValidator';
 import {
   type BeatSnapDivision,
@@ -107,17 +112,6 @@ const SNAP_OPTIONS: Array<{ id: BeatSnapDivision; label: string }> = [
   { id: '1/16', label: '1/16' },
   { id: 'free', label: 'Libre' },
 ];
-
-function resolveInitialLevel(explicit?: BeatflowLevelDocument | null): BeatflowLevelDocument {
-  if (explicit) return explicit;
-  const saved = loadSavedCreatorLevels();
-  const activeId = loadActiveCreatorLevelId();
-  if (activeId) {
-    const found = saved.find((l) => l.levelId === activeId);
-    if (found) return found;
-  }
-  return saved[0] ?? createEmptyLevelDocument();
-}
 
 function renderCasillaIcon(shape?: string, noteKind?: string) {
   if (noteKind === 'hold' || shape === 'long') {
@@ -184,7 +178,9 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
 }) => {
   const editorRef = useRef<CreatorEditor | null>(null);
   if (!editorRef.current) {
-    editorRef.current = new CreatorEditor(resolveInitialLevel(initialLevel));
+    editorRef.current = new CreatorEditor(
+      initialLevel ? structuredClone(initialLevel) : createEmptyLevelDocument(),
+    );
   }
 
   const gridCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -192,6 +188,11 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
   const trayScrollRef = useRef<HTMLDivElement>(null);
   const scrollTrackRef = useRef<HTMLDivElement>(null);
   const autosaveTimerRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+  const storageReadyRef = useRef(false);
+  const pendingAutosaveDocRef = useRef<BeatflowLevelDocument | null>(null);
+  const activeLevelIdRef = useRef<string>(editorRef.current.getLevel().levelId);
+  const documentSwitchEpochRef = useRef(0);
 
   const [snapshot, setSnapshot] = useState(() => editorRef.current!.getSnapshot());
   const [mainTab, setMainTab] = useState<CreatorMainTab>('build');
@@ -206,9 +207,9 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
   });
 
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved');
-  const [savedLevels, setSavedLevels] = useState<BeatflowLevelDocument[]>(() =>
-    loadSavedCreatorLevels(),
-  );
+  const [savedLevels, setSavedLevels] = useState<BeatflowLevelDocument[]>([]);
+  const [loadingLevels, setLoadingLevels] = useState(true);
+  const [zipBusy, setZipBusy] = useState(false);
   const [hasLinkedAudio, setHasLinkedAudio] = useState(false);
   const [playbackVolume, setPlaybackVolume] = useState(gameSettings.musicVolume ?? 0.8);
   const [musicPreviewPlaying, setMusicPreviewPlaying] = useState(false);
@@ -312,25 +313,62 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     }, 3200);
   }, []);
 
-  const persistNow = useCallback((doc: BeatflowLevelDocument) => {
-    const list = saveCreatorLevel(doc);
-    saveActiveCreatorLevelId(doc.levelId);
-    setSavedLevels(list);
-    setSaveState('saved');
+  const syncPublishFormFromLevel = useCallback((doc: BeatflowLevelDocument) => {
+    setPubCreatorName(doc.authorName || 'Creator');
+    setPubAuthType(doc.audio.rights.authorizationType);
+    setPubLicenseName(doc.audio.rights.licenseName);
+    setPubRightsHolder(doc.audio.rights.rightsHolder);
+    setPubSourceUrl(doc.audio.rights.sourceUrl ?? '');
+    setPubAllowRemix(doc.audio.rights.allowRemixAndLevelUse);
   }, []);
+
+  const persistDocNow = useCallback(
+    async (doc: BeatflowLevelDocument, setActive = true): Promise<BeatflowLevelDocument> => {
+      const snapshotDoc = structuredClone(doc);
+      const saved = await saveCreatorLevel(snapshotDoc, { setActive });
+      if (!mountedRef.current) return saved;
+      const list = await loadAllCreatorLevels();
+      if (!mountedRef.current) return saved;
+      setSavedLevels(list);
+      if (activeLevelIdRef.current === saved.levelId) {
+        setSaveState('saved');
+      }
+      return saved;
+    },
+    [],
+  );
+
+  const flushPendingAutosave = useCallback(async () => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    const pending = pendingAutosaveDocRef.current;
+    if (pending) {
+      pendingAutosaveDocRef.current = null;
+      await persistDocNow(pending, pending.levelId === activeLevelIdRef.current);
+    }
+  }, [persistDocNow]);
 
   const scheduleAutosave = useCallback(
     (doc: BeatflowLevelDocument) => {
+      if (!storageReadyRef.current) return;
+      const docSnapshot = structuredClone(doc);
+      pendingAutosaveDocRef.current = docSnapshot;
       setSaveState('saving');
       if (autosaveTimerRef.current !== null) {
         window.clearTimeout(autosaveTimerRef.current);
       }
       autosaveTimerRef.current = window.setTimeout(() => {
-        persistNow(doc);
         autosaveTimerRef.current = null;
+        const toSave = pendingAutosaveDocRef.current;
+        if (toSave && toSave.levelId === docSnapshot.levelId) {
+          pendingAutosaveDocRef.current = null;
+          void persistDocNow(toSave, toSave.levelId === activeLevelIdRef.current);
+        }
       }, 550);
     },
-    [persistNow],
+    [persistDocNow],
   );
 
   const refreshSnapshot = useCallback(
@@ -355,6 +393,50 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
       }
     },
     [scheduleAutosave],
+  );
+
+  const switchToDocument = useCallback(
+    async (
+      nextDoc: BeatflowLevelDocument,
+      options: { persistNext?: boolean } = {},
+    ): Promise<BeatflowLevelDocument | null> => {
+      setMusicPreviewPlaying(false);
+      audioEngine.stopMusic();
+      await flushPendingAutosave();
+
+      const myEpoch = ++documentSwitchEpochRef.current;
+      const previousId = activeLevelIdRef.current;
+      const target = options.persistNext
+        ? await saveCreatorLevel(structuredClone(nextDoc), { setActive: true })
+        : await (async () => {
+            const fromDb = await getCreatorLevelById(nextDoc.levelId);
+            const chosen = fromDb ?? structuredClone(nextDoc);
+            await saveActiveCreatorLevelId(chosen.levelId);
+            return chosen;
+          })();
+
+      if (!mountedRef.current || documentSwitchEpochRef.current !== myEpoch) {
+        return null;
+      }
+
+      editorRef.current?.loadProject(target);
+      activeLevelIdRef.current = target.levelId;
+      pendingAutosaveDocRef.current = null;
+      if (target.levelId !== previousId) {
+        setCursorTime(0);
+        gridCtrlRef.current?.setScrollTime(0);
+      }
+      syncPublishFormFromLevel(target);
+      refreshSnapshot(false);
+      setSaveState('saved');
+
+      const list = await loadAllCreatorLevels();
+      if (mountedRef.current && documentSwitchEpochRef.current === myEpoch) {
+        setSavedLevels(list);
+      }
+      return target;
+    },
+    [flushPendingAutosave, refreshSnapshot, syncPublishFormFromLevel],
   );
 
   // Check linked audio on level change
@@ -487,18 +569,101 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     });
   }, [snapshot, mainTab, activeBuildItem]);
 
+  // Initialize IndexedDB creator storage, migrate legacy levels safely, and hydrate active project
+  useEffect(() => {
+    mountedRef.current = true;
+    const myEpoch = documentSwitchEpochRef.current;
+    let cancelled = false;
+
+    const hydrate = async () => {
+      setLoadingLevels(true);
+      try {
+        await initCreatorLevelsStorage();
+        if (cancelled || !mountedRef.current) return;
+
+        if (initialLevel) {
+          const saved = await saveCreatorLevel(structuredClone(initialLevel), {
+            setActive: true,
+          });
+          if (cancelled || !mountedRef.current || documentSwitchEpochRef.current !== myEpoch) {
+            return;
+          }
+          editorRef.current?.loadProject(saved);
+          activeLevelIdRef.current = saved.levelId;
+          syncPublishFormFromLevel(saved);
+          const list = await loadAllCreatorLevels();
+          if (cancelled || !mountedRef.current) return;
+          setSavedLevels(list);
+          refreshSnapshot(false);
+          storageReadyRef.current = true;
+          setSaveState('saved');
+          return;
+        }
+
+        let list = await loadAllCreatorLevels();
+        if (cancelled || !mountedRef.current || documentSwitchEpochRef.current !== myEpoch) {
+          return;
+        }
+
+        const activeId = await loadActiveCreatorLevelId();
+        if (cancelled || !mountedRef.current || documentSwitchEpochRef.current !== myEpoch) {
+          return;
+        }
+
+        let targetDoc =
+          (activeId ? list.find((l) => l.levelId === activeId) : undefined) ?? list[0];
+
+        if (!targetDoc) {
+          targetDoc = await createNewCreatorLevel();
+          list = await loadAllCreatorLevels();
+        } else if (activeId !== targetDoc.levelId) {
+          await saveActiveCreatorLevelId(targetDoc.levelId);
+        }
+
+        if (cancelled || !mountedRef.current || documentSwitchEpochRef.current !== myEpoch) {
+          return;
+        }
+        editorRef.current?.loadProject(targetDoc);
+        activeLevelIdRef.current = targetDoc.levelId;
+        syncPublishFormFromLevel(targetDoc);
+        setSavedLevels(list);
+        refreshSnapshot(false);
+        storageReadyRef.current = true;
+        setSaveState('saved');
+      } finally {
+        if (!cancelled && mountedRef.current) {
+          setLoadingLevels(false);
+        }
+      }
+    };
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Cleanup autosave & preview audio on unmount
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       if (autosaveTimerRef.current !== null) {
         window.clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
       }
-      if (editorRef.current) {
-        persistNow(editorRef.current.getLevel());
+      if (storageReadyRef.current) {
+        const pending = pendingAutosaveDocRef.current;
+        pendingAutosaveDocRef.current = null;
+        if (pending) {
+          void saveCreatorLevel(pending, { setActive: true });
+        } else if (editorRef.current) {
+          void saveCreatorLevel(editorRef.current.getLevel(), { setActive: true });
+        }
       }
       audioEngine.stopMusic();
     };
-  }, [persistNow]);
+  }, []);
 
   // Playback Music preview loop (Audio-only, advances blue playhead line on 2D grid)
   useEffect(() => {
@@ -630,7 +795,8 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     if (!editorRef.current) return;
     setMusicPreviewPlaying(false);
     audioEngine.stopMusic();
-    persistNow(editorRef.current.getLevel());
+    const currentDoc = editorRef.current.getLevel();
+    void flushPendingAutosave().then(() => persistDocNow(currentDoc, true));
     setPlaytestSession({
       visualOnly,
       startTimeSec: fromStart ? 0 : Math.max(0, cursorTime),
@@ -679,37 +845,132 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     refreshSnapshot(true);
   };
 
-  const handleExportBfn = () => {
-    if (!editorRef.current) return;
-    const doc = editorRef.current.getLevel();
-    const json = serializeLevelToBfn(doc);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${(doc.levelName || 'nivel').replace(/[^a-z0-9_-]/gi, '_')}.bfn`;
-    a.click();
-    URL.revokeObjectURL(url);
-    notify('Nivel exportado en formato .bfn v3');
+  const handleOpenLevel = async (lvl: BeatflowLevelDocument) => {
+    const opened = await switchToDocument(lvl);
+    if (opened) {
+      notify(`Abierto "${opened.levelName}"`);
+    }
   };
 
-  const handleImportBfn = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const res = deserializeLevelFromBfn(String(reader.result || ''));
-        if (!res.ok || !res.level) {
-          notify(res.error ?? 'Archivo .bfn inválido');
-          return;
-        }
-        editorRef.current?.setLevel(res.level, true);
-        refreshSnapshot(true);
-        notify(`Importado "${res.level.levelName}" (v${res.level.schemaVersion})`);
-      } catch (err) {
-        notify(err instanceof Error ? err.message : 'Archivo .bfn inválido');
+  const handleNewEmptyLevel = async () => {
+    setMusicPreviewPlaying(false);
+    audioEngine.stopMusic();
+    await flushPendingAutosave();
+    const fresh = await createNewCreatorLevel();
+    if (!mountedRef.current) return;
+    await switchToDocument(fresh);
+    notify('Nuevo nivel vacío listo');
+  };
+
+  const handleDuplicateLevel = async (lvl: BeatflowLevelDocument) => {
+    await flushPendingAutosave();
+    if (editorRef.current && lvl.levelId === activeLevelIdRef.current) {
+      await persistDocNow(editorRef.current.getLevel(), true);
+    }
+    const copy = await duplicateCreatorLevel(lvl);
+    if (!mountedRef.current) return;
+    const list = await loadAllCreatorLevels();
+    if (!mountedRef.current) return;
+    setSavedLevels(list);
+    notify(`Duplicado como "${copy.levelName}"`);
+  };
+
+  const handleRenameLevel = async (levelId: string, newName: string) => {
+    await flushPendingAutosave();
+    const updated = await renameCreatorLevel(levelId, newName);
+    if (!updated || !mountedRef.current) return;
+    if (editorRef.current && levelId === activeLevelIdRef.current) {
+      editorRef.current.mutateLevel((prev) => ({
+        ...prev,
+        levelName: updated.levelName,
+        updatedDate: updated.updatedDate,
+      }));
+      refreshSnapshot(false);
+      setSaveState('saved');
+    }
+    const list = await loadAllCreatorLevels();
+    if (mountedRef.current) {
+      setSavedLevels(list);
+      notify(`Renombrado a "${updated.levelName}"`);
+    }
+  };
+
+  const handleDeleteSavedLevel = async (levelId: string) => {
+    await flushPendingAutosave();
+    const deletingActive = levelId === activeLevelIdRef.current;
+    if (deletingActive && pendingAutosaveDocRef.current?.levelId === levelId) {
+      pendingAutosaveDocRef.current = null;
+    }
+    const remaining = await deleteCreatorLevel(levelId);
+    if (!mountedRef.current) return;
+    setSavedLevels(remaining);
+
+    if (deletingActive) {
+      let nextLevel = remaining[0];
+      if (!nextLevel) {
+        nextLevel = await createNewCreatorLevel();
+        const refreshed = await loadAllCreatorLevels();
+        if (mountedRef.current) setSavedLevels(refreshed);
       }
-    };
-    reader.readAsText(file);
+      if (nextLevel && mountedRef.current) {
+        await switchToDocument(nextLevel);
+      }
+    }
+    notify('Nivel eliminado');
+  };
+
+  const handleExportZip = async (targetLevel?: BeatflowLevelDocument) => {
+    if (zipBusy) return;
+    setZipBusy(true);
+    try {
+      await flushPendingAutosave();
+      let docToExport: BeatflowLevelDocument | null = null;
+      if (targetLevel && targetLevel.levelId !== activeLevelIdRef.current) {
+        docToExport = (await getCreatorLevelById(targetLevel.levelId)) ?? targetLevel;
+      } else if (editorRef.current) {
+        docToExport = await persistDocNow(editorRef.current.getLevel(), true);
+      } else if (targetLevel) {
+        docToExport = targetLevel;
+      }
+      if (!docToExport) return;
+
+      const res = await exportLevelAsZipPackage(docToExport);
+      if (!mountedRef.current) return;
+      if (!res.ok) {
+        notify(res.error ?? 'No se pudo exportar el paquete .zip');
+        return;
+      }
+      notify(
+        res.platform === 'native'
+          ? `Paquete ${res.fileName} compartido`
+          : `Exportado paquete completo ${res.fileName}`,
+      );
+    } finally {
+      if (mountedRef.current) setZipBusy(false);
+    }
+  };
+
+  const handleImportZipFile = async (file: File) => {
+    if (zipBusy) return;
+    setZipBusy(true);
+    try {
+      await flushPendingAutosave();
+      const res = await importLevelFromZipInput(file);
+      if (!mountedRef.current) return;
+      if (!res.ok || !res.level) {
+        notify(res.error ?? 'Archivo .zip inválido');
+        return;
+      }
+      await switchToDocument(res.level);
+      setConfigOpen(false);
+      notify(
+        res.importedAudioTitle
+          ? `Importado "${res.level.levelName}" con audio "${res.importedAudioTitle}"`
+          : `Importado "${res.level.levelName}" (.zip)`,
+      );
+    } finally {
+      if (mountedRef.current) setZipBusy(false);
+    }
   };
 
   const handlePublishSubmit = (e: React.FormEvent) => {
@@ -734,7 +995,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
       notify(res.error ?? 'No se pudo validar el nivel para publicación.');
       return;
     }
-    persistNow(doc);
+    void persistDocNow(doc, true);
     setPublishOpen(false);
     notify('Nivel validado y publicado en Comunidad.');
   };
@@ -803,7 +1064,11 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
               type="button"
               onClick={() => {
                 setMusicPreviewPlaying(false);
-                if (editorRef.current) persistNow(editorRef.current.getLevel());
+                audioEngine.stopMusic();
+                if (storageReadyRef.current && editorRef.current) {
+                  void flushPendingAutosave();
+                  void persistDocNow(editorRef.current.getLevel(), true);
+                }
                 onBack();
               }}
               className="w-11 h-11 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-slate-100 shrink-0 cursor-pointer"
@@ -870,7 +1135,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
             {validationOpen && (
               <div className="absolute top-2 left-2 z-20 w-72 max-w-[82vw] rounded-xl bg-[#070b1e]/95 border border-rose-400/45 p-3 text-xs space-y-1.5 shadow-2xl">
                 <div className="flex items-center justify-between font-bold text-rose-200">
-                  <span>Validación .bfn</span>
+                  <span>Validación del nivel</span>
                   <button
                     type="button"
                     onClick={() => setValidationOpen(false)}
@@ -1473,6 +1738,8 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
           open={configOpen}
           level={snapshot.level}
           savedLevels={savedLevels}
+          loadingLevels={loadingLevels}
+          zipBusy={zipBusy}
           playbackVolume={playbackVolume}
           hasLinkedAudio={hasLinkedAudio}
           onClose={() => setConfigOpen(false)}
@@ -1486,26 +1753,23 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
           }}
           onSelectLocalSong={handleSelectLocalSong}
           onLaunchVisualPreview={() => handleLaunchPlaytest(true, false)}
-          onOpenLevel={(lvl) => {
-            setMusicPreviewPlaying(false);
-            editorRef.current?.setLevel(lvl, true);
-            refreshSnapshot(true);
-            notify(`Abierto "${lvl.levelName}"`);
-          }}
-          onNewEmptyLevel={() => {
-            setMusicPreviewPlaying(false);
-            const blank = createEmptyLevelDocument();
-            editorRef.current?.setLevel(blank, true);
-            refreshSnapshot(true);
-            notify('Nuevo nivel vacío listo');
-          }}
-          onDeleteSavedLevel={(id) => {
-            setSavedLevels(deleteCreatorLevel(id));
-          }}
-          onExportBfn={handleExportBfn}
-          onImportBfnFile={handleImportBfn}
+          onOpenLevel={handleOpenLevel}
+          onNewEmptyLevel={handleNewEmptyLevel}
+          onDuplicateLevel={handleDuplicateLevel}
+          onRenameLevel={handleRenameLevel}
+          onDeleteSavedLevel={handleDeleteSavedLevel}
+          onExportZip={handleExportZip}
+          onImportZipFile={handleImportZipFile}
           onOpenPublishModal={() => setPublishOpen(true)}
-          onOpenCommunity={onOpenCommunity}
+          onOpenCommunity={() => {
+            setMusicPreviewPlaying(false);
+            audioEngine.stopMusic();
+            if (storageReadyRef.current && editorRef.current) {
+              void flushPendingAutosave();
+              void persistDocNow(editorRef.current.getLevel(), true);
+            }
+            onOpenCommunity();
+          }}
         />
 
         {/* Contextual RGB & Trigger Inspector Drawer */}
