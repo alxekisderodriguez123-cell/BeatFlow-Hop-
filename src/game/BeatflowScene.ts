@@ -58,6 +58,29 @@ const _feverColorA = new THREE.Color('#fbbf24');
 const _feverColorB = new THREE.Color('#ec4899');
 const _burstColor = new THREE.Color('#38bdf8');
 
+// Pre-allocated math objects for event-driven 3D direct-on-note touch detection (zero per-frame overhead)
+const _touchRaycaster = new THREE.Raycaster();
+const _touchNdc = new THREE.Vector2();
+const _trackSurfacePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.04);
+const _noteMidPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.21);
+const _planeHitTrack = new THREE.Vector3();
+const _planeHitNote = new THREE.Vector3();
+const _noteHitBox = new THREE.Box3();
+const _noteBoxMin = new THREE.Vector3();
+const _noteBoxMax = new THREE.Vector3();
+const _rayBoxHit = new THREE.Vector3();
+
+interface DirectPointerTrack {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startTime: number;
+  startLane: number;
+  currentLane: number;
+  flickArmed: boolean;
+  flickSent: boolean;
+}
+
 interface TrackLayout {
   laneCount: LaneCount;
   laneStep: number;
@@ -570,6 +593,11 @@ export class BeatflowScene {
   private activeHolds = new Map<number, ActiveHoldState>();
   private activeSlides = new Map<number, ActiveSlideState>();
   private chordHitTracker = new Map<number, { count: number; minLane: number; maxLane: number }>();
+
+  // Direct 3D touch controls (phones & portrait tablets)
+  private directTouchEnabled = false;
+  private directTouchListenersAttached = false;
+  private directPointers = new Map<number, DirectPointerTrack>();
 
   // Fever state
   private feverCharge = 0;
@@ -1833,6 +1861,8 @@ export class BeatflowScene {
     this.creatorAppliedBgTheme = null;
     this.isMenuMode = false;
     this.mode = 'playing';
+    this.clearDirectPointers();
+    this.syncDirectTouchListeners();
     this.setRenderContext('gameplay');
     this.cameraRig.triggerGameplayIntro();
     this.resetPooledTrackEffects();
@@ -1882,6 +1912,7 @@ export class BeatflowScene {
         }
       }
     }
+    this.syncDirectTouchListeners();
   }
 
   public setCreatorPlaytestRuntime(params: {
@@ -1926,6 +1957,7 @@ export class BeatflowScene {
     }
     if (params.visualOnly !== undefined) {
       this.creatorVisualOnly = params.visualOnly;
+      this.syncDirectTouchListeners();
     }
   }
 
@@ -2001,9 +2033,17 @@ export class BeatflowScene {
     this.mode = mode;
     if (mode === 'playing') {
       this.setRenderContext(this.creatorPlaytestActive ? 'playtest' : 'gameplay');
+      this.syncDirectTouchListeners();
     } else if (mode === 'paused') {
+      this.clearDirectPointers();
+      this.syncDirectTouchListeners();
       this.setRenderContext('paused');
+    } else if (mode === 'ended') {
+      this.clearDirectPointers();
+      this.syncDirectTouchListeners();
     } else if (mode === 'idle') {
+      this.clearDirectPointers();
+      this.syncDirectTouchListeners();
       this.activeLevel = null;
       this.activeProfile = null;
       this.creatorPlaytestActive = false;
@@ -2035,6 +2075,8 @@ export class BeatflowScene {
 
   public triggerDefeatEffect(): void {
     this.mode = 'ended';
+    this.clearDirectPointers();
+    this.syncDirectTouchListeners();
     this.defeatFlash = 1.0;
     this.missWaveLife = 1.0;
     this.missWaveRing.position.set(0, 0.08, HIT_LINE_Z);
@@ -2043,6 +2085,8 @@ export class BeatflowScene {
 
   public triggerVictoryEffect(): void {
     this.mode = 'ended';
+    this.clearDirectPointers();
+    this.syncDirectTouchListeners();
     this.spawnSurfaceWave(_victoryGoldColor, -34, 0.24);
     for (let i = 0; i < this.trackLayout.laneCount; i++) {
       const col = i % 2 === 0 ? this.primaryColor : _victoryGoldColor;
@@ -2449,6 +2493,300 @@ export class BeatflowScene {
       matchesDir ? 'FLICK!' : 'GOOD',
     );
   }
+
+  public setDirectTouchEnabled(enabled: boolean): void {
+    if (this.directTouchEnabled !== enabled) {
+      this.directTouchEnabled = enabled;
+      if (!enabled) {
+        this.clearDirectPointers();
+      }
+    }
+    this.syncDirectTouchListeners();
+  }
+
+  private clearDirectPointers(): void {
+    if (this.directPointers.size > 0) {
+      this.directPointers.clear();
+      this.heldLanes.fill(false);
+      this.activePointerLane = null;
+    }
+  }
+
+  private syncDirectTouchListeners(): void {
+    const shouldAttach =
+      !this.disposed &&
+      this.directTouchEnabled &&
+      this.mode === 'playing' &&
+      !(this.creatorPlaytestActive && this.creatorVisualOnly);
+
+    const el = this.renderer.domElement;
+    if (shouldAttach && !this.directTouchListenersAttached) {
+      el.style.touchAction = 'none';
+      el.addEventListener('pointerdown', this.handleCanvasPointerDown);
+      el.addEventListener('pointermove', this.handleCanvasPointerMove);
+      el.addEventListener('pointerup', this.handleCanvasPointerUpOrCancel);
+      el.addEventListener('pointercancel', this.handleCanvasPointerUpOrCancel);
+      this.directTouchListenersAttached = true;
+    } else if (!shouldAttach && this.directTouchListenersAttached) {
+      el.style.touchAction = '';
+      el.removeEventListener('pointerdown', this.handleCanvasPointerDown);
+      el.removeEventListener('pointermove', this.handleCanvasPointerMove);
+      el.removeEventListener('pointerup', this.handleCanvasPointerUpOrCancel);
+      el.removeEventListener('pointercancel', this.handleCanvasPointerUpOrCancel);
+      this.directTouchListenersAttached = false;
+      this.clearDirectPointers();
+    }
+  }
+
+  private syncHeldLanesFromDirectPointers(): void {
+    this.heldLanes.fill(false);
+    let latestLane: number | null = null;
+    for (const track of this.directPointers.values()) {
+      if (
+        !track.flickArmed &&
+        track.currentLane >= 0 &&
+        track.currentLane < this.trackLayout.laneCount
+      ) {
+        this.heldLanes[track.currentLane] = true;
+        latestLane = track.currentLane;
+      }
+    }
+    this.activePointerLane = latestLane;
+  }
+
+  private resolveDirectTouchNote(clientX: number, clientY: number): LevelNote | null {
+    const level = this.activeLevel;
+    if (!level) return null;
+
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+
+    _touchNdc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.cameraRig.camera.updateMatrixWorld();
+    _touchRaycaster.setFromCamera(_touchNdc, this.cameraRig.camera);
+
+    const hasTrackPlaneHit =
+      _touchRaycaster.ray.intersectPlane(_trackSurfacePlane, _planeHitTrack) !== null;
+    const hasNotePlaneHit =
+      _touchRaycaster.ray.intersectPlane(_noteMidPlane, _planeHitNote) !== null;
+
+    const currentTime = this.getGameplayCurrentTime();
+    const speed = level.noteSpeed;
+    const halfLaneX = this.trackLayout.laneStep * 0.48;
+    const noteHalfZ = 0.72;
+    const hitLineZoneHalfZ = 1.45;
+
+    let bestNote: LevelNote | null = null;
+    let bestRank = Infinity;
+
+    for (let i = this.nextSearchIdx; i < level.notes.length; i++) {
+      const note = level.notes[i];
+      const baseHw = this.getNoteHitWindow(note);
+      const hw = note.kind === 'flick' ? baseHw * 1.15 : baseHw;
+      if (note.time - currentTime > hw) break;
+      if (note.hit || note.missed) continue;
+
+      const absTimeDiff = Math.abs(note.time - currentTime);
+      if (absTimeDiff > hw) continue;
+
+      const laneX = this.trackLayout.laneX[note.lane];
+      if (laneX === undefined) continue;
+      const noteZ = HIT_LINE_Z - (note.time - currentTime) * speed;
+
+      // Enforce physical proximity to the hit-line region
+      if (noteZ < HIT_LINE_Z - Math.max(2.6, hw * speed + 0.35) || noteZ > DESPAWN_Z + 0.5) {
+        continue;
+      }
+
+      const maxY = note.kind === 'flick' ? 0.78 : 0.46;
+      _noteBoxMin.set(laneX - halfLaneX, 0.0, noteZ - noteHalfZ);
+      _noteBoxMax.set(laneX + halfLaneX, maxY, noteZ + noteHalfZ);
+      _noteHitBox.set(_noteBoxMin, _noteBoxMax);
+
+      let matched = false;
+      let spatialDist = Infinity;
+
+      if (_touchRaycaster.ray.intersectBox(_noteHitBox, _rayBoxHit) !== null) {
+        matched = true;
+        spatialDist = Math.hypot(_rayBoxHit.x - laneX, _rayBoxHit.z - noteZ);
+      } else {
+        const planePt = hasTrackPlaneHit ? _planeHitTrack : hasNotePlaneHit ? _planeHitNote : null;
+        if (
+          planePt &&
+          Math.abs(planePt.x - laneX) <= halfLaneX &&
+          (Math.abs(planePt.z - noteZ) <= 0.95 ||
+            (Math.abs(planePt.z - HIT_LINE_Z) <= hitLineZoneHalfZ &&
+              Math.abs(noteZ - HIT_LINE_Z) <= 2.2))
+        ) {
+          matched = true;
+          spatialDist = Math.hypot(planePt.x - laneX, planePt.z - noteZ);
+        }
+      }
+
+      if (!matched) continue;
+
+      const rank = absTimeDiff + spatialDist * 0.04;
+      if (rank < bestRank) {
+        bestRank = rank;
+        bestNote = note;
+      }
+    }
+
+    return bestNote;
+  }
+
+  private resolveTrackLaneFromClient(clientX: number, clientY: number): number | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+
+    _touchNdc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.cameraRig.camera.updateMatrixWorld();
+    _touchRaycaster.setFromCamera(_touchNdc, this.cameraRig.camera);
+
+    if (_touchRaycaster.ray.intersectPlane(_trackSurfacePlane, _planeHitTrack) === null) {
+      return null;
+    }
+
+    if (
+      Math.abs(_planeHitTrack.x) > this.trackLayout.roadWidth * 0.65 ||
+      _planeHitTrack.z < -16 ||
+      _planeHitTrack.z > DESPAWN_Z + 2.5
+    ) {
+      return null;
+    }
+
+    const rawLane =
+      _planeHitTrack.x / this.trackLayout.laneStep + (this.trackLayout.laneCount - 1) / 2;
+    return Math.max(0, Math.min(this.trackLayout.laneCount - 1, Math.round(rawLane)));
+  }
+
+  private handleCanvasPointerDown = (e: PointerEvent): void => {
+    if (!this.directTouchEnabled || this.mode !== 'playing' || !this.activeLevel) return;
+    if (this.creatorPlaytestActive && this.creatorVisualOnly) return;
+
+    e.preventDefault();
+    try {
+      this.renderer.domElement.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore synthetic pointer events
+    }
+
+    const hitNote = this.resolveDirectTouchNote(e.clientX, e.clientY);
+    if (hitNote) {
+      const isFlick = hitNote.kind === 'flick';
+      this.directPointers.set(e.pointerId, {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        startTime: performance.now(),
+        startLane: hitNote.lane,
+        currentLane: hitNote.lane,
+        flickArmed: isFlick,
+        flickSent: false,
+      });
+
+      if (isFlick) {
+        this.laneFlash[hitNote.lane] = Math.max(this.laneFlash[hitNote.lane], 0.72);
+      } else {
+        this.handleLaneInput(hitNote.lane);
+      }
+      return;
+    }
+
+    // Allow re-acquiring an already active slide directly on the 3D track
+    if (this.activeSlides.size > 0) {
+      const trackLane = this.resolveTrackLaneFromClient(e.clientX, e.clientY);
+      if (trackLane !== null) {
+        this.directPointers.set(e.pointerId, {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          startTime: performance.now(),
+          startLane: trackLane,
+          currentLane: trackLane,
+          flickArmed: false,
+          flickSent: false,
+        });
+        this.syncHeldLanesFromDirectPointers();
+        this.handleLaneSlideMove(trackLane);
+      }
+    }
+  };
+
+  private handleCanvasPointerMove = (e: PointerEvent): void => {
+    const track = this.directPointers.get(e.pointerId);
+    if (!track) return;
+
+    if (track.flickArmed && !track.flickSent) {
+      const dx = e.clientX - track.startX;
+      const dy = e.clientY - track.startY;
+      const dist = Math.hypot(dx, dy);
+      const elapsed = performance.now() - track.startTime;
+
+      if (dist >= 22 && elapsed <= 220) {
+        let dir: FlickDirection = 'up';
+        if (Math.abs(dx) > Math.abs(dy) * 1.15) {
+          dir = dx < 0 ? 'left' : 'right';
+        } else if (dy < -16) {
+          dir = 'up';
+        } else {
+          dir = dx < 0 ? 'left' : 'right';
+        }
+        track.flickSent = true;
+        this.handleLaneFlick(track.startLane, dir);
+      }
+    }
+
+    if (this.activeSlides.size > 0) {
+      const nextLane = this.resolveTrackLaneFromClient(e.clientX, e.clientY);
+      if (nextLane !== track.currentLane) {
+        track.currentLane = nextLane ?? -1;
+        this.syncHeldLanesFromDirectPointers();
+        if (nextLane !== null) {
+          this.handleLaneSlideMove(nextLane);
+        }
+      }
+    }
+  };
+
+  private handleCanvasPointerUpOrCancel = (e: PointerEvent): void => {
+    const track = this.directPointers.get(e.pointerId);
+    if (!track) return;
+    const releasedLane = track.currentLane;
+    const wasFlickOnly = track.flickArmed;
+    this.directPointers.delete(e.pointerId);
+
+    try {
+      if (this.renderer.domElement.hasPointerCapture(e.pointerId)) {
+        this.renderer.domElement.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Ignore
+    }
+
+    if (wasFlickOnly) {
+      return;
+    }
+
+    let laneStillHeld = false;
+    for (const other of this.directPointers.values()) {
+      if (!other.flickArmed && other.currentLane === releasedLane) {
+        laneStillHeld = true;
+        break;
+      }
+    }
+
+    this.syncHeldLanesFromDirectPointers();
+    if (!laneStillHeld && releasedLane >= 0 && releasedLane < this.trackLayout.laneCount) {
+      this.handleLaneRelease(releasedLane);
+    }
+  };
 
   private getExpectedSlideLane(note: LevelNote, currentTime: number): number {
     const path = note.slidePath;
@@ -4048,6 +4386,9 @@ export class BeatflowScene {
 
   public dispose(): void {
     this.disposed = true;
+    this.directTouchEnabled = false;
+    this.clearDirectPointers();
+    this.syncDirectTouchListeners();
     this.stopLoop();
     window.removeEventListener('resize', this.handleResize);
     if (typeof document !== 'undefined') {

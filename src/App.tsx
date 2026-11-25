@@ -64,6 +64,7 @@ import { OnboardingTutorialModal } from './components/OnboardingTutorialModal';
 import { BeatflowCreatorView } from './components/creator/BeatflowCreatorView';
 import { CommunityHubView } from './components/creator/CommunityHubView';
 import type { BeatflowLevelDocument } from './types/creator';
+import { useGameplayControlMode } from './utils/deviceControls';
 
 function pickRandomEnvironmentTheme(exclude?: EnvironmentTheme): EnvironmentTheme {
   const pool = exclude
@@ -172,6 +173,7 @@ export default function App() {
   const [creatorInitialLevel, setCreatorInitialLevel] = useState<BeatflowLevelDocument | null>(null);
   const [creatorAutoPlaytest, setCreatorAutoPlaytest] = useState(false);
   const [creatorPlaytestActive, setCreatorPlaytestActive] = useState(false);
+  const controlMode = useGameplayControlMode();
 
   const activeSongRef = useRef<SongMetadata | null>(null);
   const activeConfigRef = useRef<GenerationConfig>(settings.generationConfig);
@@ -191,6 +193,19 @@ export default function App() {
   useEffect(() => {
     activeLevelRef.current = activeLevel;
   }, [activeLevel]);
+
+  // Synchronize direct 3D touch mode on phones & portrait tablets during classic gameplay
+  useEffect(() => {
+    if (screen === 'playing') {
+      const enableDirectTouch = !paused && !gameResult && !controlMode.showVisualPanels;
+      sceneRef.current?.setDirectTouchEnabled(enableDirectTouch);
+      if (paused || gameResult) {
+        setKeyboardPressedLanes(new Array(8).fill(false));
+      }
+    } else if (!creatorPlaytestActive) {
+      sceneRef.current?.setDirectTouchEnabled(false);
+    }
+  }, [screen, paused, gameResult, controlMode.showVisualPanels, creatorPlaytestActive]);
 
   // Mount Three.js 3D Stage once
   useEffect(() => {
@@ -1046,6 +1061,7 @@ export default function App() {
           song={activeSong}
           stats={liveStats}
           twoThumbMode={Boolean(activeConfig.twoThumbMode)}
+          showVisualPanels={controlMode.showVisualPanels}
           externalPressedLanes={keyboardPressedLanes}
           onLanePress={(lane) => sceneRef.current?.handleLaneInput(lane)}
           onLaneRelease={(lane) => sceneRef.current?.handleLaneRelease(lane)}

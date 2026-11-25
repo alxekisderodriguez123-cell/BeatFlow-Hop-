@@ -21,6 +21,7 @@ import {
   ensureCreatorAudioDecoded,
 } from '../../creator/CreatorPlaytestAdapter';
 import { GameplayHud } from '../GameplayHud';
+import { useGameplayControlMode } from '../../utils/deviceControls';
 
 interface CreatorPlaytestOverlayProps {
   scene: BeatflowScene | null;
@@ -116,6 +117,8 @@ export const CreatorPlaytestOverlay: React.FC<CreatorPlaytestOverlayProps> = ({
   const judgmentCounterRef = useRef(0);
   const lastKeyTapRef = useRef<{ lane: number; time: number } | null>(null);
 
+  const controlMode = useGameplayControlMode();
+
   // Sync visualOnly & speedScale into BeatflowScene
   useEffect(() => {
     scene?.setCreatorPlaytestRuntime({
@@ -123,6 +126,15 @@ export const CreatorPlaytestOverlay: React.FC<CreatorPlaytestOverlayProps> = ({
       speedScale,
     });
   }, [scene, visualOnly, speedScale]);
+
+  // Sync direct 3D touch state during Creator Playtest
+  useEffect(() => {
+    const enableDirectTouch = !paused && !visualOnly && !controlMode.showVisualPanels;
+    scene?.setDirectTouchEnabled(enableDirectTouch);
+    return () => {
+      scene?.setDirectTouchEnabled(false);
+    };
+  }, [scene, paused, visualOnly, controlMode.showVisualPanels]);
 
   // Launch Playtest / 2.5D Preview on BeatflowScene
   useEffect(() => {
@@ -608,6 +620,7 @@ export const CreatorPlaytestOverlay: React.FC<CreatorPlaytestOverlayProps> = ({
             isFavorite: false,
           }}
           stats={liveStats}
+          showVisualPanels={controlMode.showVisualPanels}
           externalPressedLanes={keyboardPressedLanes}
           onLanePress={(lane) => scene?.handleLaneInput(lane)}
           onLaneRelease={(lane) => scene?.handleLaneRelease(lane)}

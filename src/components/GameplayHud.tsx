@@ -7,11 +7,13 @@ import type {
   SongMetadata,
 } from '../types/game';
 import { getLaneKeyLabels } from '../game/presets';
+import { useGameplayControlMode } from '../utils/deviceControls';
 
 interface GameplayHudProps {
   song: SongMetadata;
   stats: LiveGameplayStats;
   twoThumbMode?: boolean;
+  showVisualPanels?: boolean;
   externalPressedLanes?: boolean[];
   onLanePress: (lane: number) => void;
   onLaneRelease: (lane: number) => void;
@@ -33,6 +35,7 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
   song,
   stats,
   twoThumbMode = false,
+  showVisualPanels,
   externalPressedLanes,
   onLanePress,
   onLaneRelease,
@@ -40,6 +43,8 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
   onLaneFlick,
   onPause,
 }) => {
+  const detectedControlMode = useGameplayControlMode();
+  const panelsVisible = showVisualPanels ?? detectedControlMode.showVisualPanels;
   const laneCount: LaneCount = stats.laneCount ?? 4;
   const keyLabels = getLaneKeyLabels(laneCount);
   const arenaRef = useRef<HTMLDivElement>(null);
@@ -51,7 +56,7 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
   useEffect(() => {
     setTouchPressed(new Array(laneCount).fill(false));
     pointersRef.current.clear();
-  }, [laneCount]);
+  }, [laneCount, panelsVisible]);
 
   const syncTouchPressed = useCallback(() => {
     const next = new Array(laneCount).fill(false);
@@ -162,7 +167,11 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
   const shieldSlots = stats.maxMisses <= 6 ? stats.maxMisses : 0;
 
   return (
-    <div className="fixed inset-0 z-20 flex flex-col justify-between pointer-events-none select-none">
+    <div
+      className={`fixed inset-0 z-20 flex flex-col ${
+        panelsVisible ? 'justify-between' : 'justify-start'
+      } pointer-events-none select-none`}
+    >
       {/* Subtle Reactive Screen Edge Glow (never washes out notes) */}
       {screenAlpha > 0.01 && (
         <div
@@ -174,8 +183,9 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
         />
       )}
 
-      {/* Top Song Progress Bar */}
-      <div className="relative w-full h-1.5 bg-[#040614]/90 border-b border-cyan-500/20">
+      <div className="flex flex-col w-full">
+        {/* Top Song Progress Bar */}
+        <div className="relative w-full h-1.5 bg-[#040614]/90 border-b border-cyan-500/20">
         <div
           className={`h-full transition-[width] duration-100 ${
             stats.feverActive
@@ -355,47 +365,51 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
           </div>
         </div>
       </div>
+      </div>
 
-      {/* Bottom N-Lane Multi-Touch / Slide / Flick Arena (compact on desktop widescreen, comfortable on mobile) */}
-      <div
-        ref={arenaRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUpOrCancel}
-        onPointerCancel={handlePointerUpOrCancel}
-        style={{ gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))` }}
-        className="w-full h-[40vh] sm:h-[28vh] lg:h-[17vh] min-h-[116px] max-w-4xl lg:max-w-5xl mx-auto grid gap-1.5 sm:gap-2 px-2 sm:px-6 pb-3 pointer-events-auto touch-none"
-      >
-        {Array.from({ length: laneCount }).map((_, lane) => {
-          const isPressed =
-            Boolean(touchPressed[lane]) || Boolean(externalPressedLanes?.[lane]);
-          const isCyan = lane % 2 === 0;
-          return (
-            <div
-              key={lane}
-              className={`relative flex flex-col items-center justify-end pb-2 sm:pb-2.5 rounded-2xl border transition-all duration-75 cursor-pointer ${
-                isPressed
-                  ? isCyan
-                    ? 'bg-cyan-400/22 border-cyan-200 shadow-[inset_0_-18px_28px_rgba(34,211,238,0.28),0_0_16px_rgba(34,211,238,0.3)] -translate-y-0.5'
-                    : 'bg-fuchsia-400/22 border-fuchsia-200 shadow-[inset_0_-18px_28px_rgba(232,121,249,0.28),0_0_16px_rgba(232,121,249,0.3)] -translate-y-0.5'
-                  : 'bg-[#080d22]/35 hover:bg-white/[0.04] border-white/12'
-              }`}
-            >
-              <span
-                className={`text-[10px] sm:text-[11px] font-mono-num font-bold px-2.5 py-0.5 rounded-lg border tracking-wider transition-all ${
+      {/* Bottom N-Lane Multi-Touch / Slide / Flick Arena (only on PC & horizontal tablets; phones & vertical tablets use direct 3D note touch) */}
+      {panelsVisible && (
+        <div
+          ref={arenaRef}
+          data-testid="gameplay-lane-panels"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUpOrCancel}
+          onPointerCancel={handlePointerUpOrCancel}
+          style={{ gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))` }}
+          className="w-full h-[40vh] sm:h-[28vh] lg:h-[17vh] min-h-[116px] max-w-4xl lg:max-w-5xl mx-auto grid gap-1.5 sm:gap-2 px-2 sm:px-6 pb-3 pointer-events-auto touch-none"
+        >
+          {Array.from({ length: laneCount }).map((_, lane) => {
+            const isPressed =
+              Boolean(touchPressed[lane]) || Boolean(externalPressedLanes?.[lane]);
+            const isCyan = lane % 2 === 0;
+            return (
+              <div
+                key={lane}
+                className={`relative flex flex-col items-center justify-end pb-2 sm:pb-2.5 rounded-2xl border transition-all duration-75 cursor-pointer ${
                   isPressed
                     ? isCyan
-                      ? 'bg-cyan-500/45 border-cyan-100 text-white shadow-[0_0_10px_rgba(34,211,238,0.6)]'
-                      : 'bg-fuchsia-500/45 border-fuchsia-100 text-white shadow-[0_0_10px_rgba(232,121,249,0.6)]'
-                    : 'bg-[#070b1e]/85 border-cyan-300/25 text-slate-200'
+                      ? 'bg-cyan-400/22 border-cyan-200 shadow-[inset_0_-18px_28px_rgba(34,211,238,0.28),0_0_16px_rgba(34,211,238,0.3)] -translate-y-0.5'
+                      : 'bg-fuchsia-400/22 border-fuchsia-200 shadow-[inset_0_-18px_28px_rgba(232,121,249,0.28),0_0_16px_rgba(232,121,249,0.3)] -translate-y-0.5'
+                    : 'bg-[#080d22]/35 hover:bg-white/[0.04] border-white/12'
                 }`}
               >
-                {keyLabels[lane]}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+                <span
+                  className={`text-[10px] sm:text-[11px] font-mono-num font-bold px-2.5 py-0.5 rounded-lg border tracking-wider transition-all ${
+                    isPressed
+                      ? isCyan
+                        ? 'bg-cyan-500/45 border-cyan-100 text-white shadow-[0_0_10px_rgba(34,211,238,0.6)]'
+                        : 'bg-fuchsia-500/45 border-fuchsia-100 text-white shadow-[0_0_10px_rgba(232,121,249,0.6)]'
+                      : 'bg-[#070b1e]/85 border-cyan-300/25 text-slate-200'
+                  }`}
+                >
+                  {keyLabels[lane]}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
