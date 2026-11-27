@@ -638,12 +638,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {tab === 'camera' && (
             <section className="rounded-2xl bg-[#060a1c]/95 border border-indigo-400/30 p-4 space-y-4">
               <h2 className="text-xs font-bold tracking-[0.14em] text-indigo-300">
-                SISTEMA DE CÁMARA 3D CINEMATOGRÁFICA
+                SISTEMA DE CÁMARA 2.5D CINEMATOGRÁFICA
               </h2>
 
               <ToggleRow
                 label="Cámara dinámica activa"
-                subtitle="Activa zoom, desplazamientos, inclinación y pulsos 3D en la perspectiva"
+                subtitle="Activa zoom, desplazamientos, inclinación y pulsos 2.5D en la perspectiva"
                 checked={cam.enabled}
                 onChange={() =>
                   updateCam((c) => {
@@ -655,7 +655,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <ToggleRow
                 label="Vista completamente estática"
-                subtitle="Mantiene la cámara 3D fija sin zoom, balanceo, inclinación ni vibración"
+                subtitle="Mantiene la cámara 2.5D fija sin zoom, balanceo, inclinación ni vibración"
                 checked={cam.staticView}
                 onChange={() =>
                   updateCam((c) => {
@@ -714,7 +714,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     [
                       'horizontalOffset',
                       'Desplazamiento horizontal',
-                      'Traslación lateral de la cámara 3D con retorno automático',
+                      'Traslación lateral de la cámara 2.5D con retorno automático',
                     ],
                     [
                       'verticalOffset',
@@ -807,7 +807,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
 
               <div>
-                <div className="text-xs text-slate-300 mb-2">Forma de las notas 3D</div>
+                <div className="text-xs text-slate-300 mb-2">Forma de las notas 2.5D</div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {NOTE_SHAPE_OPTIONS.map((s) => (
                     <button
@@ -828,14 +828,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <div>
                 <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="text-xs text-slate-300">Mundo 3D</div>
+                  <div className="text-xs text-slate-300">Escenario 2.5D</div>
                   <button
                     type="button"
                     onClick={() => setEnvPreviewOpen(true)}
                     className="text-xs font-semibold text-cyan-300 hover:text-cyan-200 flex items-center gap-1 cursor-pointer whitespace-nowrap"
                   >
                     <Eye className="w-3.5 h-3.5" />
-                    <span>Selector y Vista Previa 3D</span>
+                    <span>Selector y Vista Previa 2.5D</span>
                   </button>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
@@ -1159,7 +1159,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                 <ToggleRow
                   label="Efectos ambientales del escenario en menú"
-                  subtitle="Luces reactivas, portal de energía, vehículos y partículas en el fondo 3D"
+                  subtitle="Luces reactivas, destellos y partículas en el fondo 2.5D"
                   checked={menuAmbient.ambientEffectsEnabled}
                   onChange={() =>
                     updateMenuAmbient({ ambientEffectsEnabled: !menuAmbient.ambientEffectsEnabled })
@@ -1168,7 +1168,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
                 <ToggleRow
                   label="Animaciones y parallax del menú"
-                  subtitle="Movimiento panorámico 3D, parallax interactivo y brillo dinámico del HUD"
+                  subtitle="Movimiento panorámico 2.5D, parallax interactivo y brillo dinámico del HUD"
                   checked={menuAmbient.menuAnimationsEnabled}
                   onChange={() =>
                     updateMenuAmbient({ menuAnimationsEnabled: !menuAmbient.menuAnimationsEnabled })
@@ -1372,7 +1372,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
 
               <div>
-                <div className="text-xs text-slate-300 mb-2">Calidad gráfica 3D</div>
+                <div className="text-xs text-slate-300 mb-2">Calidad gráfica 2.5D</div>
                 <div className="grid grid-cols-3 gap-2">
                   {(
                     [

@@ -25,17 +25,33 @@ export type QualityLevel = 'low' | 'medium' | 'high';
 
 export type VisualIntensity = 'low' | 'medium' | 'high';
 
+export type BackgroundLibraryCategory = 'vanilla' | 'editor';
+
+export type SceneTransitionType =
+  | 'fade'
+  | 'slide'
+  | 'zoom'
+  | 'portal'
+  | 'flash'
+  | 'color_shift';
+
+export type OfficialEnvironmentTheme = 'tropical' | 'cyberpunk' | 'sakura' | 'cosmic';
+
 export type EnvironmentTheme =
-  | 'cyberpunk'
-  | 'tropical'
+  | OfficialEnvironmentTheme
   | 'ocean'
   | 'mountain'
   | 'newyork'
-  | 'cosmic'
   | 'nightclub'
   | 'synthwave'
   | 'reactor'
-  | 'digital';
+  | 'digital'
+  | 'crystal'
+  | 'floating_paradise'
+  | 'aurora_ice'
+  | 'editor_prism_matrix'
+  | 'editor_crimson_eclipse'
+  | 'editor_jade_sanctuary';
 
 export type EnvironmentPreference = 'auto' | 'random' | EnvironmentTheme;
 
@@ -316,6 +332,7 @@ export type MusicalEventType =
 export type MusicalRole =
   | 'kick'
   | 'snare'
+  | 'clap'
   | 'hihat'
   | 'bassline'
   | 'vocal'
@@ -352,6 +369,13 @@ export interface FusionWeights {
   drop: number;
 }
 
+export interface SectionTransitionEvent {
+  time: number;
+  from: MusicalSectionType;
+  to: MusicalSectionType;
+  intensity: number; // 0..1
+}
+
 export interface MusicProfile {
   analysisVersion?: number;
   bpm: number;
@@ -364,6 +388,7 @@ export interface MusicProfile {
   onsets: OnsetEvent[];
   fusedEvents?: MusicalEvent[];
   sections?: MusicalSection[];
+  sectionTransitions?: SectionTransitionEvent[];
   drops?: number[];
   crescendos?: Array<{ start: number; end: number; slope: number }>;
   energyTimeline: EnergyFrame[];
@@ -416,6 +441,8 @@ export interface LevelNote {
   sectionType?: MusicalSectionType;
   challengeSection?: boolean;
   eventType?: MusicalEventType;
+  musicalRole?: MusicalRole;
+  approachDurationSec?: number;
   pitchClass?: number;
   hit: boolean;
   missed: boolean;

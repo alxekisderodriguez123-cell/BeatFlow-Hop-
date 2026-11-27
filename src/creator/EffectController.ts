@@ -1,4 +1,4 @@
-import type { EnvironmentTheme, QualityLevel } from '../types/game';
+import type { EnvironmentTheme, QualityLevel, SceneTransitionType } from '../types/game';
 import type {
   BackgroundTriggerParams,
   CameraFxTriggerParams,
@@ -46,6 +46,9 @@ export interface ResolvedBackgroundFxState {
   parallaxSpeed: number;
   scrollSpeed: number;
   particleDensity: number;
+  activeTransitionId?: string;
+  activeTransitionType?: SceneTransitionType;
+  activeTransitionDurationMs?: number;
   layerVisibility: {
     sky: boolean;
     midground: boolean;
@@ -235,11 +238,17 @@ export class EffectController {
           particleDensity:
             this.persistentBackground.particleDensity +
             (bg.particleDensity - this.persistentBackground.particleDensity) * t,
+          activeTransitionId: item.id,
+          activeTransitionType: bg.transitionType ?? 'fade',
+          activeTransitionDurationMs: Math.round(Math.max(240, dur * 1000)),
           layerVisibility: { ...bg.layerVisibility },
         };
         if (t >= 1) {
           this.persistentBackground = {
             ...out.background,
+            activeTransitionId: undefined,
+            activeTransitionType: undefined,
+            activeTransitionDurationMs: undefined,
             layerVisibility: { ...out.background.layerVisibility },
           };
           this.active.splice(i, 1);

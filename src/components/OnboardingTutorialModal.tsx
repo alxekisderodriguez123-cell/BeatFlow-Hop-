@@ -71,7 +71,7 @@ export const OnboardingTutorialModal: React.FC<OnboardingTutorialModalProps> = (
                 id="tutorial-modal-title"
                 className="font-display font-bold text-base sm:text-lg text-white truncate"
               >
-                Tutorial Rápido & Escenario 3D
+                Tutorial Rápido & Escenario 2.5D
               </h2>
             </div>
           </div>
@@ -89,11 +89,11 @@ export const OnboardingTutorialModal: React.FC<OnboardingTutorialModalProps> = (
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto beatflow-scroll px-5 py-4 space-y-4">
-          {/* Random 3D Scenario Card */}
+          {/* Random 2.5D Scenario Card */}
           <div className="rounded-2xl bg-[#08102a] border border-indigo-400/35 p-3.5 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-[10px] font-bold tracking-[0.14em] text-indigo-300">
-                ESCENARIO 3D ASIGNADO AL AZAR
+                ESCENARIO 2.5D ASIGNADO AL AZAR
               </div>
               <div className="font-display font-bold text-sm sm:text-base text-white mt-0.5 truncate">
                 {envMeta.label}

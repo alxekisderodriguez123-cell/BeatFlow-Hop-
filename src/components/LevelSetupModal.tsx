@@ -372,7 +372,7 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
           {/* Note Geometry Selector */}
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-2">
-              Forma de las notas 3D
+              Forma de las notas 2.5D
             </label>
             <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
               {NOTE_SHAPE_OPTIONS.map((s) => (
@@ -397,7 +397,7 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
             <div className="flex items-center justify-between gap-2 mb-2">
               <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
                 <Globe className="w-3.5 h-3.5 text-cyan-300" />
-                <span>Mundo / Entorno 3D</span>
+                <span>Escenario 2.5D</span>
               </label>
               <button
                 type="button"
@@ -405,7 +405,7 @@ export const LevelSetupModal: React.FC<LevelSetupModalProps> = ({
                 className="text-xs font-semibold text-cyan-300 hover:text-cyan-200 flex items-center gap-1 cursor-pointer whitespace-nowrap"
               >
                 <Eye className="w-3.5 h-3.5" />
-                <span>Vista previa 3D</span>
+                <span>Vista previa 2.5D</span>
               </button>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">

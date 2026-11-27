@@ -3,7 +3,11 @@ import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import type { BeatflowLevelDocument } from '../types/creator';
-import type { DifficultyLevel, EnvironmentTheme } from '../types/game';
+import type { BackgroundLibraryCategory, DifficultyLevel, EnvironmentTheme } from '../types/game';
+import {
+  getEnvironmentCategory,
+  resolveSafeEnvironmentTheme,
+} from '../game/environments/environmentSelector';
 import {
   CURRENT_BFN_SCHEMA_VERSION,
   REQUIRED_GAME_VERSION,
@@ -77,6 +81,7 @@ export interface BeatflowZipManifest {
     authorName: string;
     difficulty: DifficultyLevel;
     environmentTheme: EnvironmentTheme;
+    environmentCategory?: BackgroundLibraryCategory;
     objectCount: number;
   };
   audio: {
@@ -299,7 +304,10 @@ export async function buildLevelZipPackage(doc: BeatflowLevelDocument): Promise<
       authorId: prepared.authorId,
       authorName: prepared.authorName,
       difficulty: prepared.difficulty,
-      environmentTheme: prepared.environmentTheme,
+      environmentTheme: resolveSafeEnvironmentTheme(prepared.environmentTheme),
+      environmentCategory: getEnvironmentCategory(
+        resolveSafeEnvironmentTheme(prepared.environmentTheme),
+      ),
       objectCount: prepared.objects.length,
     },
     audio: {

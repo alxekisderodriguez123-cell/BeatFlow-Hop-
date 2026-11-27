@@ -49,7 +49,10 @@ import type {
   RightsAuthorizationType,
   ViewLayerVisibility,
 } from '../../types/creator';
-import { ALL_ENVIRONMENT_THEMES } from '../../game/environments/environmentSelector';
+import {
+  ALL_ENVIRONMENT_THEMES,
+  VANILLA_ENVIRONMENT_THEMES,
+} from '../../game/environments/environmentSelector';
 import {
   ENVIRONMENT_DEFINITIONS,
   renderEnvironmentThumbnailDataUrl,
@@ -241,7 +244,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     snapshot.level.audio.rights.allowRemixAndLevelUse,
   );
 
-  // Environment thumbnails generated lazily only when BACKGROUNDS tab is opened
+  // Lazy thumbnails inside Creator BACKGROUNDS tab
   const [worldThumbnails, setWorldThumbnails] = useState<Map<EnvironmentTheme, string>>(
     () => new Map(),
   );
@@ -544,7 +547,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Suspend 2D grid rendering during 3D playtest & notify parent App of playtest visibility
+  // Suspend 2D grid rendering during 2.5D playtest & notify parent App of playtest visibility
   useEffect(() => {
     const active = Boolean(playtestSession);
     gridCtrlRef.current?.setActive(!active);
@@ -1456,59 +1459,70 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
           >
             {mainTab === 'build' && (
               <>
-                {/* Background 3D Preset Thumbnails when categoryTab === 'backgrounds' */}
-                {categoryTab === 'backgrounds' &&
-                  ALL_ENVIRONMENT_THEMES.map((theme) => {
-                    const def = ENVIRONMENT_DEFINITIONS[theme];
-                    const active = snapshot.level.environmentTheme === theme;
-                    return (
-                      <button
-                        key={theme}
-                        type="button"
-                        onClick={() => {
-                          editorRef.current?.mutateLevel((prev) => ({
-                            ...prev,
-                            environmentTheme: theme,
-                            audio: {
-                              ...prev.audio,
-                              palette: {
-                                primary: def.colorPalette.primary,
-                                secondary: def.colorPalette.secondary,
-                                accent: def.colorPalette.accent,
+                {/* Official 2.5D Illustrated Background Library when categoryTab === 'backgrounds' */}
+                {categoryTab === 'backgrounds' && (
+                  <>
+                    <div className="shrink-0 h-[74px] px-2.5 flex flex-col justify-center items-center border border-cyan-400/25 rounded-lg bg-cyan-500/8">
+                      <span className="text-[9px] font-extrabold tracking-widest text-cyan-300 uppercase">
+                        Escenarios 2.5D
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-300 tabular-nums">
+                        {VANILLA_ENVIRONMENT_THEMES.length}
+                      </span>
+                    </div>
+                    {VANILLA_ENVIRONMENT_THEMES.map((theme) => {
+                      const def = ENVIRONMENT_DEFINITIONS[theme];
+                      const active = snapshot.level.environmentTheme === theme;
+                      return (
+                        <button
+                          key={theme}
+                          type="button"
+                          onClick={() => {
+                            editorRef.current?.mutateLevel((prev) => ({
+                              ...prev,
+                              environmentTheme: theme,
+                              audio: {
+                                ...prev.audio,
+                                palette: {
+                                  primary: def.colorPalette.primary,
+                                  secondary: def.colorPalette.secondary,
+                                  accent: def.colorPalette.accent,
+                                },
                               },
-                            },
-                          }));
-                          refreshSnapshot(true);
-                          notify(`Escenario: ${def.displayName}`);
-                        }}
-                        className={`h-[74px] w-24 shrink-0 rounded-xl overflow-hidden border relative text-left cursor-pointer ${
-                          active
-                            ? 'border-cyan-400 ring-1 ring-cyan-400/60'
-                            : 'border-white/15 opacity-85 hover:opacity-100'
-                        }`}
-                      >
-                        {worldThumbnails.get(theme) ? (
-                          <img
-                            src={worldThumbnails.get(theme)}
-                            alt={def.displayName}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div
-                            className="w-full h-full"
-                            style={{
-                              background: `linear-gradient(135deg, ${def.colorPalette.primary}44, ${def.colorPalette.secondary}55)`,
-                            }}
-                          />
-                        )}
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-1.5 py-1">
-                          <div className="text-[10px] font-bold text-white truncate">
-                            {def.displayName}
+                            }));
+                            refreshSnapshot(true);
+                            notify(`Escenario 2.5D: ${def.displayName}`);
+                          }}
+                          className={`h-[74px] w-28 shrink-0 rounded-xl overflow-hidden border relative text-left cursor-pointer ${
+                            active
+                              ? 'border-cyan-400 ring-1 ring-cyan-400/60'
+                              : 'border-white/15 opacity-85 hover:opacity-100'
+                          }`}
+                        >
+                          {worldThumbnails.get(theme) ? (
+                            <img
+                              src={worldThumbnails.get(theme)}
+                              alt={def.displayName}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div
+                              className="w-full h-full"
+                              style={{
+                                background: `linear-gradient(135deg, ${def.colorPalette.primary}44, ${def.colorPalette.secondary}55)`,
+                              }}
+                            />
+                          )}
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/92 via-black/65 to-transparent px-1.5 py-1">
+                            <div className="text-[10px] font-bold text-white truncate">
+                              {def.displayName}
+                            </div>
                           </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
 
                 {/* Build Items (Casillas, 14 Camera FX, 8 Pulses, 4 Background Triggers) */}
                 {categoryItems.map((item) => {
@@ -1985,7 +1999,7 @@ export const BeatflowCreatorView: React.FC<BeatflowCreatorViewProps> = ({
         )}
       </div>
 
-      {/* Real BeatflowScene Playtest & 2.5D/3D Preview Overlay */}
+      {/* Real BeatflowScene Playtest & 2.5D Preview Overlay */}
       {playtestSession && (
         <CreatorPlaytestOverlay
           scene={scene}

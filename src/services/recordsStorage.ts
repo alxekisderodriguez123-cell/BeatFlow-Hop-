@@ -1,3 +1,4 @@
+import { resolveSafeEnvironmentTheme } from '../game/environments/environmentSelector';
 import type {
   AudioReactionConfig,
   CameraConfig,
@@ -416,9 +417,17 @@ export function loadSettings(): GameSettings {
       parsedGen?.maxMisses ?? 3,
     );
 
+    const normalizedEnvMode =
+      parsed.environmentMode === 'auto' || parsed.environmentMode === 'random'
+        ? parsed.environmentMode
+        : parsed.environmentMode
+          ? resolveSafeEnvironmentTheme(parsed.environmentMode)
+          : DEFAULT_SETTINGS.environmentMode;
+
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
+      environmentMode: normalizedEnvMode,
       defaultDifficulty: normalizedDefaultDiff,
       generationConfig: {
         ...baseGen,

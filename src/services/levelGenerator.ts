@@ -282,6 +282,9 @@ export function generateProceduralLevel(
       case 'kick':
         roleWeight = 1.08;
         break;
+      case 'clap':
+        roleWeight = config.difficulty === 'easy' ? 0.85 : 1.06;
+        break;
       case 'snare':
         roleWeight = config.difficulty === 'easy' ? 0.8 : 1.04;
         break;
@@ -357,6 +360,7 @@ export function generateProceduralLevel(
 
   // Step 2: Assign ergonomically playable lanes & expressive mechanics driven by musical roles
   const rawNotes: LevelNote[] = [];
+  const approachDurationSec = Number((49.6 / noteSpeed).toFixed(3));
   let noteId = 1;
   let currentLane = Math.floor(rng() * laneCount);
   let stepDir: 1 | -1 = rng() < 0.5 ? 1 : -1;
@@ -553,7 +557,7 @@ export function generateProceduralLevel(
       } else if (role === 'hihat') {
         // Hi-hats sparkle along outer lanes
         nextLane = currentLane < laneCount / 2 ? laneCount - 1 : 0;
-      } else if (role === 'snare') {
+      } else if (role === 'snare' || role === 'clap') {
         nextLane = (currentLane + stepDir + laneCount) % laneCount;
       } else if (rng() < randomness * 0.55) {
         const maxJump =
@@ -704,8 +708,8 @@ export function generateProceduralLevel(
       }
       if (actualEnd !== chosenLane) {
         const targetSlideDur = ev.duration
-          ? THREEClamp(ev.duration * 0.85, 0.4, 1.05)
-          : THREEClamp(beatPeriod * (rng() < 0.5 ? 0.85 : 1.15), 0.38, 1.05);
+          ? clampRange(ev.duration * 0.85, 0.4, 1.05)
+          : clampRange(beatPeriod * (rng() < 0.5 ? 0.85 : 1.15), 0.38, 1.05);
         const minL = Math.min(chosenLane, actualEnd);
         const maxL = Math.max(chosenLane, actualEnd);
         let pathClear = true;
@@ -761,7 +765,7 @@ export function generateProceduralLevel(
         const rawHoldDur = ev.duration
           ? Math.min(ev.duration, Math.max(0.42, freeSpaceAhead + 0.35))
           : beatPeriod * (rng() < 0.65 ? 1.0 : 1.5);
-        const holdDur = THREEClamp(
+        const holdDur = clampRange(
           rawHoldDur,
           0.38,
           Math.max(0.65, Math.min(1.5, freeSpaceAhead + 0.45)),
@@ -782,18 +786,24 @@ export function generateProceduralLevel(
       mech.flickNotes.enabled &&
       patternTag !== 'trill' &&
       ev.time - lastFlickTime > Math.max(0.65, beatPeriod * 1.15) &&
-      (role === 'drop' || role === 'snare' || role === 'hihat' || ev.intensity > 0.62)
+      (role === 'drop' ||
+        role === 'clap' ||
+        role === 'snare' ||
+        role === 'hihat' ||
+        ev.intensity > 0.62)
     ) {
       const flickChance =
         0.16 *
         mech.flickNotes.frequency *
         (role === 'drop'
           ? 1.65
-          : role === 'snare'
-            ? 1.28
-            : secType === 'drop' || secType === 'chorus'
-              ? 1.22
-              : 0.8);
+          : role === 'clap'
+            ? 1.32
+            : role === 'snare'
+              ? 1.28
+              : secType === 'drop' || secType === 'chorus'
+                ? 1.22
+                : 0.8);
       if (rng() < flickChance) {
         noteKind = 'flick';
         if (chosenLane === 0) flickDir = rng() < 0.5 ? 'right' : 'up';
@@ -880,6 +890,8 @@ export function generateProceduralLevel(
       sectionType: secType,
       challengeSection: isChallengeSection,
       eventType: ev.type,
+      musicalRole: role,
+      approachDurationSec,
       pitchClass: ev.pitchClass,
       hit: false,
       missed: false,
@@ -923,6 +935,8 @@ export function generateProceduralLevel(
           sectionType: secType,
           challengeSection: isChallengeSection,
           eventType: ev.type,
+          musicalRole: role,
+          approachDurationSec,
           pitchClass: ev.pitchClass,
           hit: false,
           missed: false,
@@ -1026,6 +1040,6 @@ export function generateProceduralLevel(
   };
 }
 
-function THREEClamp(val: number, min: number, max: number): number {
+function clampRange(val: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, val));
 }

@@ -24,7 +24,7 @@ export const AUDIOVISUAL_PRESETS: AudiovisualPreset[] = [
   {
     id: 'auto',
     label: 'Automático (Canción)',
-    description: 'Adapta colores, mundo 3D y geometría al análisis y carátula de cada canción',
+    description: 'Adapta colores, escenario 2.5D y geometría al análisis y carátula de cada canción',
     palette: { primary: '#22d3ee', secondary: '#e879f9', accent: '#6366f1' },
     environment: 'auto',
     defaultNoteShape: 'tile',
@@ -36,7 +36,7 @@ export const AUDIOVISUAL_PRESETS: AudiovisualPreset[] = [
     label: 'Neon City',
     description: 'Cian eléctrico, magenta urbano y rascacielos futuristas',
     palette: { primary: '#06d6f2', secondary: '#ec4899', accent: '#3b82f6' },
-    environment: 'newyork',
+    environment: 'cyberpunk',
     defaultNoteShape: 'tile',
     bloomScale: 1.0,
     glowScale: 1.0,
@@ -64,9 +64,9 @@ export const AUDIOVISUAL_PRESETS: AudiovisualPreset[] = [
   {
     id: 'ocean',
     label: 'Ocean',
-    description: 'Turquesa bioluminiscente, azul abisal y reflejos líquidos',
+    description: 'Turquesa luminoso, reflejos sobre el mar y brisa tropical',
     palette: { primary: '#2dd4bf', secondary: '#38bdf8', accent: '#0ea5e9' },
-    environment: 'ocean',
+    environment: 'tropical',
     defaultNoteShape: 'disc',
     bloomScale: 0.92,
     glowScale: 0.95,
@@ -84,9 +84,9 @@ export const AUDIOVISUAL_PRESETS: AudiovisualPreset[] = [
   {
     id: 'electronic',
     label: 'Electronic',
-    description: 'Láseres de club, azul eléctrico y precisión de cabina nocturna',
+    description: 'Luces nocturnas de neón y alta energía urbana',
     palette: { primary: '#22c55e', secondary: '#06b6d4', accent: '#a855f7' },
-    environment: 'nightclub',
+    environment: 'cyberpunk',
     defaultNoteShape: 'diamond',
     bloomScale: 1.08,
     glowScale: 1.1,
@@ -94,9 +94,9 @@ export const AUDIOVISUAL_PRESETS: AudiovisualPreset[] = [
   {
     id: 'dreamscape',
     label: 'Dreamscape',
-    description: 'Lavanda etéreo, menta luminosa y cordillera nocturna',
+    description: 'Lavanda etéreo, pétalos luminosos y santuario sereno',
     palette: { primary: '#67e8f9', secondary: '#f0abfc', accent: '#818cf8' },
-    environment: 'mountain',
+    environment: 'sakura',
     defaultNoteShape: 'ring',
     bloomScale: 0.9,
     glowScale: 0.95,
@@ -106,7 +106,7 @@ export const AUDIOVISUAL_PRESETS: AudiovisualPreset[] = [
     label: 'Minimal Neon',
     description: 'Alto contraste limpio con brillo contenido para máxima lectura',
     palette: { primary: '#38bdf8', secondary: '#f472b6', accent: '#94a3b8' },
-    environment: 'newyork',
+    environment: 'cyberpunk',
     defaultNoteShape: 'square',
     bloomScale: 0.65,
     glowScale: 0.78,
@@ -128,23 +128,17 @@ export function resolveNoteShape(
   }
   switch (envTheme) {
     case 'cosmic':
+    case 'crystal':
+    case 'aurora_ice':
       return 'sphere';
-    case 'ocean':
-      return 'disc';
     case 'tropical':
-      return 'tile';
+    case 'ocean':
+    case 'floating_paradise':
+      return 'disc';
+    case 'sakura':
     case 'mountain':
-      return 'prism';
-    case 'newyork':
-      return 'square';
-    case 'nightclub':
-      return 'diamond';
-    case 'synthwave':
+    case 'editor_jade_sanctuary':
       return 'tile';
-    case 'reactor':
-      return 'hexagon';
-    case 'digital':
-      return 'prism';
     case 'cyberpunk':
     default:
       return 'tile';

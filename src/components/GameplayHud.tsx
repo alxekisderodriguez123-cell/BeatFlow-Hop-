@@ -367,7 +367,7 @@ export const GameplayHud: React.FC<GameplayHudProps> = ({
       </div>
       </div>
 
-      {/* Bottom N-Lane Multi-Touch / Slide / Flick Arena (only on PC & horizontal tablets; phones & vertical tablets use direct 3D note touch) */}
+      {/* Bottom N-Lane Multi-Touch / Slide / Flick Arena (only on PC & horizontal tablets; phones & vertical tablets use direct 2.5D note touch) */}
       {panelsVisible && (
         <div
           ref={arenaRef}

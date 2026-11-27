@@ -6,6 +6,7 @@ import type {
   MusicalSection,
   MusicalSectionType,
   OnsetEvent,
+  SectionTransitionEvent,
   SilenceRange,
   SpectralBand6,
   SubdivisionBeat,
@@ -13,7 +14,7 @@ import type {
 } from '../types/game';
 import { fuseMusicalEvents, DEFAULT_FUSION_WEIGHTS } from './eventFusion';
 
-export const ANALYSIS_VERSION = 3;
+export const ANALYSIS_VERSION = 4;
 
 const HPSS_BAND_COUNT = 48;
 const PITCH_MIDI_MIN = 36; // C2 (~65.4 Hz)
@@ -920,8 +921,9 @@ export function analyzePcmData(
 
   for (const p of snarePeaks) {
     const f = p.frame;
-    let band6: SpectralBand6 = 'mid';
-    if (lowMidSeries[f] > midSeries[f] * 1.2) band6 = 'low_mid';
+    const isClap = flatnessSeries[f] >= 0.34 && highMidSeries[f] >= lowMidSeries[f] * 0.92;
+    let band6: SpectralBand6 = isClap ? 'high_mid' : 'mid';
+    if (!isClap && lowMidSeries[f] > midSeries[f] * 1.2) band6 = 'low_mid';
     else if (highMidSeries[f] > midSeries[f] * 1.15) band6 = 'high_mid';
     onsets.push({
       time: Number(frameTime(f).toFixed(3)),
@@ -929,7 +931,7 @@ export function analyzePcmData(
       band: 'mid',
       band6,
       layer: 'percussive_mid',
-      role: 'snare',
+      role: isClap ? 'clap' : 'snare',
     });
   }
 
@@ -1362,6 +1364,22 @@ export function analyzePcmData(
     }
   }
 
+  const sectionTransitions: SectionTransitionEvent[] = [];
+  for (let i = 1; i < sections.length; i++) {
+    const prev = sections[i - 1];
+    const cur = sections[i];
+    if (prev.type !== cur.type) {
+      sectionTransitions.push({
+        time: cur.start,
+        from: prev.type,
+        to: cur.type,
+        intensity: Number(
+          Math.min(1, Math.abs(cur.energy - prev.energy) * 1.5 + cur.energy * 0.35).toFixed(3),
+        ),
+      });
+    }
+  }
+
   // Downsample multi-band energy & HPSS descriptors to 20 Hz (50ms step)
   const energyTimeline: EnergyFrame[] = [];
   for (let t = 0; t < duration; t += 0.05) {
@@ -1410,6 +1428,7 @@ export function analyzePcmData(
     tempoSegments: rawSegments,
     onsets,
     sections,
+    sectionTransitions,
     drops,
     crescendos,
     energyTimeline,

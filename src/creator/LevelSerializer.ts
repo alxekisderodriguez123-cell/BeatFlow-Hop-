@@ -9,6 +9,7 @@ import type {
 import type { DifficultyLevel, EnvironmentTheme, LaneCount } from '../types/game';
 import { GroupManager } from './GroupManager';
 import { concreteShapeToCasillaShape } from './ObjectLibrary';
+import { resolveSafeEnvironmentTheme } from '../game/environments/environmentSelector';
 
 export const CURRENT_BFN_SCHEMA_VERSION = 3;
 export const REQUIRED_GAME_VERSION = '2.0.0';
@@ -103,7 +104,7 @@ export function createEmptyLevelDocument(options: {
     version: 1,
     requiredGameVersion: REQUIRED_GAME_VERSION,
     assetReferences: [],
-    environmentTheme: options.environmentTheme || 'cyberpunk',
+    environmentTheme: resolveSafeEnvironmentTheme(options.environmentTheme, 'cyberpunk'),
     audio: {
       songId: options.songId,
       title: options.songTitle || 'Pista Personalizada',
@@ -182,6 +183,7 @@ export function migrateLevelDocument(raw: Record<string, unknown>): BeatflowLeve
   const merged: BeatflowLevelDocument = {
     ...base,
     ...(sanitized as Partial<BeatflowLevelDocument>),
+    environmentTheme: resolveSafeEnvironmentTheme(sanitized.environmentTheme, base.environmentTheme),
     schemaVersion: CURRENT_BFN_SCHEMA_VERSION,
     requiredGameVersion: REQUIRED_GAME_VERSION,
     groups: GroupManager.ensureDefaultGroup(rawGroups),
@@ -195,8 +197,19 @@ export function migrateLevelDocument(raw: Record<string, unknown>): BeatflowLeve
               concreteShapeToCasillaShape(shape, o.noteData.kind),
           }
         : undefined;
+      const trigger =
+        o.trigger?.type === 'background' && o.trigger.params.theme
+          ? {
+              ...o.trigger,
+              params: {
+                ...o.trigger.params,
+                theme: resolveSafeEnvironmentTheme(o.trigger.params.theme, 'cyberpunk'),
+              },
+            }
+          : o.trigger;
       return {
         ...o,
+        trigger,
         groupIds: Array.isArray(o.groupIds) && o.groupIds.length > 0 ? o.groupIds : [1],
         material: {
           color: o.material?.color || '#22d3ee',

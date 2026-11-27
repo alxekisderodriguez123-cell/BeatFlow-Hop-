@@ -88,6 +88,13 @@ const WORLD_ANCHOR_PALETTES: Record<
   synthwave: { primary: '#f43f8e', secondary: '#22d3ee', accent: '#fde047', tertiary: '#a855f7', complementary: '#38bdf8', feverPrimary: '#fde047', feverSecondary: '#f43f8e' },
   reactor: { primary: '#f59e0b', secondary: '#22d3ee', accent: '#fb7185', tertiary: '#fb923c', complementary: '#38bdf8', feverPrimary: '#fbbf24', feverSecondary: '#22d3ee' },
   digital: { primary: '#22d3ee', secondary: '#a855f7', accent: '#34d399', tertiary: '#38bdf8', complementary: '#fb7185', feverPrimary: '#34d399', feverSecondary: '#a855f7' },
+  sakura: { primary: '#f472b6', secondary: '#c084fc', accent: '#fde68a', tertiary: '#fb7185', complementary: '#67e8f9', feverPrimary: '#fda4af', feverSecondary: '#c084fc' },
+  crystal: { primary: '#22d3ee', secondary: '#a855f7', accent: '#67e8f9', tertiary: '#3b82f6', complementary: '#f472b6', feverPrimary: '#67e8f9', feverSecondary: '#e879f9' },
+  floating_paradise: { primary: '#38bdf8', secondary: '#34d399', accent: '#fde047', tertiary: '#fb923c', complementary: '#f472b6', feverPrimary: '#fde047', feverSecondary: '#34d399' },
+  aurora_ice: { primary: '#2dd4bf', secondary: '#38bdf8', accent: '#a7f3d0', tertiary: '#6366f1', complementary: '#f0abfc', feverPrimary: '#5eead4', feverSecondary: '#38bdf8' },
+  editor_prism_matrix: { primary: '#22d3ee', secondary: '#e879f9', accent: '#fde047', tertiary: '#6366f1', complementary: '#34d399', feverPrimary: '#fde047', feverSecondary: '#22d3ee' },
+  editor_crimson_eclipse: { primary: '#fb7185', secondary: '#f59e0b', accent: '#fde047', tertiary: '#be123c', complementary: '#38bdf8', feverPrimary: '#fde047', feverSecondary: '#fb7185' },
+  editor_jade_sanctuary: { primary: '#34d399', secondary: '#22d3ee', accent: '#fef08a', tertiary: '#0f766e', complementary: '#c084fc', feverPrimary: '#fef08a', feverSecondary: '#34d399' },
 };
 
 const SECTION_STYLES: Record<MusicalSectionType, ChromaticStyle> = {

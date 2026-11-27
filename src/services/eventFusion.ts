@@ -90,6 +90,7 @@ const ROLE_BASE_BONUS: Record<MusicalRole, number> = {
   melody: 0.14,
   harmony: 0.1,
   kick: 0.11,
+  clap: 0.105,
   snare: 0.1,
   bassline: 0.09,
   beat: 0.08,
@@ -250,7 +251,7 @@ export function fuseMusicalEvents(
         pitchConfidence: pitchConf,
       });
     } else {
-      // Percussive layers (kick, snare, hihat)
+      // Percussive layers (kick, snare, clap, hihat)
       role =
         onset.role ??
         (onset.layer === 'percussive_low'
@@ -272,9 +273,11 @@ export function fuseMusicalEvents(
         weight =
           role === 'kick'
             ? weights.percussion * 1.04
-            : role === 'snare'
-              ? weights.percussion * 1.0
-              : weights.percussion * 0.76;
+            : role === 'clap'
+              ? weights.percussion * 1.02
+              : role === 'snare'
+                ? weights.percussion * 1.0
+                : weights.percussion * 0.76;
       }
 
       candidates.push({

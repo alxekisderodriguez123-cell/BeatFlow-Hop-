@@ -660,6 +660,7 @@ export function createDefaultBackgroundTriggerParams(
     scrollSpeed: 1.0,
     particleDensity: 1.0,
     transitionDuration: 0.9,
+    transitionType: 'fade',
     layerVisibility: {
       sky: true,
       midground: true,

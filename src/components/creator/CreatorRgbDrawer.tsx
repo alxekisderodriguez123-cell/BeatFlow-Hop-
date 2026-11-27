@@ -1,6 +1,6 @@
 import React from 'react';
 import { Palette, RotateCcw, Trash2, X } from 'lucide-react';
-import type { EnvironmentTheme, FlickDirection, LaneCount } from '../../types/game';
+import type { EnvironmentTheme, FlickDirection, LaneCount, SceneTransitionType } from '../../types/game';
 import type {
   AudioReactiveBand,
   BackgroundTriggerParams,
@@ -17,6 +17,10 @@ import type {
 } from '../../types/creator';
 import { ALL_ENVIRONMENT_THEMES } from '../../game/environments/environmentSelector';
 import { ENVIRONMENT_DEFINITIONS } from '../../game/environments/environmentDefinitions';
+import {
+  SCENE_TRANSITION_LABELS,
+  SCENE_TRANSITION_TYPES,
+} from '../../game/transitions/SceneTransitionEngine';
 import { casillaShapeToConcreteShape, isCasillaObject } from '../../creator/ObjectLibrary';
 
 interface CreatorRgbDrawerProps {
@@ -899,7 +903,7 @@ const BackgroundTriggerEditor: React.FC<{
 }> = ({ params, onChange }) => (
   <div className="space-y-3">
     <label className="block space-y-1">
-      <span className="text-[11px] font-semibold text-slate-300">Escenario 3D Destino</span>
+      <span className="text-[11px] font-semibold text-slate-300">Escenario 2.5D Destino</span>
       <select
         value={params.theme ?? ''}
         onChange={(e) =>
@@ -911,6 +915,21 @@ const BackgroundTriggerEditor: React.FC<{
         {ALL_ENVIRONMENT_THEMES.map((t) => (
           <option key={t} value={t}>
             {ENVIRONMENT_DEFINITIONS[t].displayName}
+          </option>
+        ))}
+      </select>
+    </label>
+
+    <label className="block space-y-1">
+      <span className="text-[11px] font-semibold text-slate-300">Tipo de Transición</span>
+      <select
+        value={params.transitionType ?? 'fade'}
+        onChange={(e) => onChange({ transitionType: e.target.value as SceneTransitionType })}
+        className="w-full min-h-[44px] bg-[#0b122b] border border-white/15 rounded-xl px-3 text-white"
+      >
+        {SCENE_TRANSITION_TYPES.map((tr) => (
+          <option key={tr} value={tr}>
+            {SCENE_TRANSITION_LABELS[tr]}
           </option>
         ))}
       </select>

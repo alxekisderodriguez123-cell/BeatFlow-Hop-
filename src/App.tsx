@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BeatflowScene } from './game/BeatflowScene';
-import { ALL_ENVIRONMENT_THEMES } from './game/environments/environmentSelector';
+import { VANILLA_ENVIRONMENT_THEMES } from './game/environments/environmentSelector';
 import {
   getLaneKeyCodes,
   getPresetById,
@@ -68,8 +68,8 @@ import { useGameplayControlMode } from './utils/deviceControls';
 
 function pickRandomEnvironmentTheme(exclude?: EnvironmentTheme): EnvironmentTheme {
   const pool = exclude
-    ? ALL_ENVIRONMENT_THEMES.filter((t) => t !== exclude)
-    : ALL_ENVIRONMENT_THEMES;
+    ? VANILLA_ENVIRONMENT_THEMES.filter((t) => t !== exclude)
+    : VANILLA_ENVIRONMENT_THEMES;
   return pool[Math.floor(Math.random() * pool.length)] ?? 'cyberpunk';
 }
 
@@ -80,19 +80,23 @@ function getPresetForTheme(theme: EnvironmentTheme): AudiovisualPresetId {
     case 'cosmic':
       return 'cosmic';
     case 'ocean':
+    case 'aurora_ice':
+    case 'editor_jade_sanctuary':
       return 'ocean';
     case 'tropical':
+    case 'floating_paradise':
+    case 'editor_crimson_eclipse':
       return 'sunset';
     case 'mountain':
+    case 'sakura':
       return 'dreamscape';
     case 'nightclub':
-      return 'electronic';
-    case 'synthwave':
-      return 'cyberpunk';
     case 'reactor':
       return 'electronic';
+    case 'synthwave':
     case 'digital':
-      return 'cyberpunk';
+    case 'crystal':
+    case 'editor_prism_matrix':
     case 'cyberpunk':
     default:
       return 'cyberpunk';
@@ -194,7 +198,7 @@ export default function App() {
     activeLevelRef.current = activeLevel;
   }, [activeLevel]);
 
-  // Synchronize direct 3D touch mode on phones & portrait tablets during classic gameplay
+  // Synchronize direct 2.5D touch mode on phones & portrait tablets during classic gameplay
   useEffect(() => {
     if (screen === 'playing') {
       const enableDirectTouch = !paused && !gameResult && !controlMode.showVisualPanels;
@@ -207,17 +211,17 @@ export default function App() {
     }
   }, [screen, paused, gameResult, controlMode.showVisualPanels, creatorPlaytestActive]);
 
-  // Mount Three.js 3D Stage once
+  // Mount Canvas 2.5D Stage once
   useEffect(() => {
     if (!canvasMountRef.current) return;
-    const threeScene = new BeatflowScene(canvasMountRef.current, settings);
-    sceneRef.current = threeScene;
+    const stageScene = new BeatflowScene(canvasMountRef.current, settings);
+    sceneRef.current = stageScene;
     if (tutorialOpen) {
-      threeScene.setPalette(getPresetById(getPresetForTheme(tutorialTheme)).palette);
-      threeScene.setEnvironment(tutorialTheme, `TUTORIAL-${tutorialTheme}`);
+      stageScene.setPalette(getPresetById(getPresetForTheme(tutorialTheme)).palette);
+      stageScene.setEnvironment(tutorialTheme, `TUTORIAL-${tutorialTheme}`);
     }
     return () => {
-      threeScene.dispose();
+      stageScene.dispose();
       sceneRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -288,7 +292,7 @@ export default function App() {
     };
   }, []);
 
-  // Sync audio, menu ambient audio & 3D settings
+  // Sync audio, menu ambient audio & 2.5D settings
   useEffect(() => {
     audioEngine.setMusicVolume(settings.musicVolume);
     audioEngine.setAmbientVolume(settings.ambientVolume ?? 0.6);
@@ -312,7 +316,7 @@ export default function App() {
     screen === 'playing' ||
     (screen === 'creator' && creatorPlaytestActive);
 
-  // Keep menu ambient audio & 3D scene rendering lifecycle strictly aligned to active screen
+  // Keep menu ambient audio & 2.5D scene rendering lifecycle strictly aligned to active screen
   useEffect(() => {
     const sc = sceneRef.current;
     if (sc) {
@@ -906,7 +910,7 @@ export default function App() {
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-[#050714] select-none">
-      {/* Isolated 3D WebGL Canvas Mount (hidden and suspended when screen does not need 3D stage) */}
+      {/* Isolated 2.5D Canvas Mount (hidden and suspended when screen does not need stage) */}
       <div
         ref={canvasMountRef}
         className={

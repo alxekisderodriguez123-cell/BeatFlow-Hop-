@@ -7,6 +7,7 @@ import type {
   MusicalSectionType,
   NoteKind,
   QualityLevel,
+  SceneTransitionType,
   SongPalette,
 } from './game';
 
@@ -403,6 +404,7 @@ export interface BackgroundTriggerParams {
   scrollSpeed: number; // 0.2..2.5
   particleDensity: number; // 0..2.0
   transitionDuration: number;
+  transitionType?: SceneTransitionType;
   layerVisibility: {
     sky: boolean;
     midground: boolean;

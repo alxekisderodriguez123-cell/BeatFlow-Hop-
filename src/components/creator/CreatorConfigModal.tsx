@@ -320,7 +320,7 @@ export const CreatorConfigModal: React.FC<CreatorConfigModalProps> = ({
                   className="w-full min-h-[48px] flex items-center justify-center gap-2 rounded-xl bg-indigo-500/25 hover:bg-indigo-500/35 border border-indigo-400/50 text-indigo-100 font-bold text-sm cursor-pointer"
                 >
                   <Eye className="w-4 h-4" />
-                  <span>Abrir Vista Previa 2.5D / 3D</span>
+                  <span>Abrir Vista Previa 2.5D</span>
                 </button>
               </div>
             </>

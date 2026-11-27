@@ -6,6 +6,7 @@ import type {
   GameSettings,
   LaneCount,
   LiveGameplayStats,
+  MusicalSectionType,
   QualityLevel,
 } from '../../types/game';
 import type { BeatflowLevelDocument, ViewLayerVisibility } from '../../types/creator';
@@ -32,6 +33,27 @@ interface CreatorPlaytestOverlayProps {
   startTimeSec: number;
   initialVisualOnly: boolean;
   onExit: () => void;
+}
+
+function resolveCreatorSectionAt(
+  markers: BeatflowLevelDocument['markers'],
+  timeSec: number,
+): MusicalSectionType {
+  let latestMarker: BeatflowLevelDocument['markers'][number] | null = null;
+  for (const m of markers) {
+    if (m.timeSec <= timeSec && (!latestMarker || m.timeSec >= latestMarker.timeSec)) {
+      latestMarker = m;
+    }
+  }
+  if (!latestMarker) return 'groove';
+  if (latestMarker.kind === 'drop') return 'drop';
+  const lbl = latestMarker.label.toLowerCase();
+  if (lbl.includes('drop')) return 'drop';
+  if (lbl.includes('buildup') || lbl.includes('subida')) return 'buildup';
+  if (lbl.includes('chorus') || lbl.includes('estribillo')) return 'chorus';
+  if (lbl.includes('calm') || lbl.includes('calma') || lbl.includes('intro')) return 'calm';
+  if (lbl.includes('breakdown') || lbl.includes('puente')) return 'breakdown';
+  return 'groove';
 }
 
 function buildInitialLiveStats(laneCount: LaneCount, bpm: number, durationSec: number): LiveGameplayStats {
@@ -127,7 +149,7 @@ export const CreatorPlaytestOverlay: React.FC<CreatorPlaytestOverlayProps> = ({
     });
   }, [scene, visualOnly, speedScale]);
 
-  // Sync direct 3D touch state during Creator Playtest
+  // Sync direct 2.5D touch state during Creator Playtest
   useEffect(() => {
     const enableDirectTouch = !paused && !visualOnly && !controlMode.showVisualPanels;
     scene?.setDirectTouchEnabled(enableDirectTouch);
@@ -294,7 +316,8 @@ export const CreatorPlaytestOverlay: React.FC<CreatorPlaytestOverlayProps> = ({
                 isPlaying: true,
               };
 
-          const lightOut = lighting.step(dt, bands, 'groove', false, true);
+          const activeSection = resolveCreatorSectionAt(level.markers, t);
+          const lightOut = lighting.step(dt, bands, activeSection, false, true);
           const beatDur = 60 / Math.max(40, level.audio.bpm);
           const beatIdx = Math.floor(t / beatDur);
           const beatTriggered = beatIdx !== lastBeatIdx;
@@ -307,7 +330,7 @@ export const CreatorPlaytestOverlay: React.FC<CreatorPlaytestOverlayProps> = ({
               currentTime: t,
               dt,
               bpm: level.audio.bpm,
-              section: 'groove',
+              section: activeSection,
               beatTriggered,
               onsetTriggered: false,
               lighting: lightOut,
@@ -670,7 +693,7 @@ export const CreatorPlaytestOverlay: React.FC<CreatorPlaytestOverlayProps> = ({
           }`}
         >
           {visualOnly ? <Eye className="w-3.5 h-3.5" /> : <Gamepad2 className="w-3.5 h-3.5" />}
-          <span>{visualOnly ? 'Vista 2.5D/3D' : 'Playtest'}</span>
+          <span>{visualOnly ? 'Vista 2.5D' : 'Playtest'}</span>
         </button>
 
         {!hasAudio && (
